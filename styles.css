@@ -232,6 +232,7 @@ select {
   display: grid;
   place-items: center;
   min-height: 42px;
+  margin-top: 8px;
   border: 1px dashed var(--teal);
   border-radius: 8px;
   background: #f2faf8;
@@ -248,11 +249,16 @@ select {
   margin-top: 10px;
 }
 
-.import-status {
+.import-status,
+.import-hint {
   margin: 10px 0 0;
   color: var(--muted);
   font-size: 13px;
   line-height: 1.45;
+}
+
+.import-hint {
+  font-size: 12px;
 }
 
 .primary-action {

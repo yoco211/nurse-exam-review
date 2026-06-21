@@ -100,6 +100,7 @@ const els = {
   categorySelect: document.querySelector("#categorySelect"),
   yearSelect: document.querySelector("#yearSelect"),
   importFileInput: document.querySelector("#importFileInput"),
+  pdfFileInput: document.querySelector("#pdfFileInput"),
   importStatus: document.querySelector("#importStatus"),
   sampleJsonBtn: document.querySelector("#sampleJsonBtn"),
   clearImportedBtn: document.querySelector("#clearImportedBtn"),
@@ -183,7 +184,7 @@ function normalizeImportedQuestion(item, index) {
   if (!item.question || options.length < 2) return null;
 
   const answer = normalizeAnswer(item.answer ?? item.answerIndex ?? item.correctIndex ?? item.correctAnswer, options);
-  if (answer < 0 || answer >= options.length) return null;
+  if (answer !== null && (answer < 0 || answer >= options.length)) return null;
 
   const examRaw = String(item.exam || item.examNumber || item.yearKey || "取込");
   const exam = item.exam ? String(item.exam) : examRaw.startsWith("第") ? examRaw : `第${examRaw}回`;
@@ -207,9 +208,10 @@ function normalizeImportedQuestion(item, index) {
 }
 
 function normalizeAnswer(rawAnswer, options) {
+  if (rawAnswer === undefined || rawAnswer === null || rawAnswer === "") return null;
   if (Number.isInteger(rawAnswer)) return rawAnswer;
   if (typeof rawAnswer === "number") return Math.trunc(rawAnswer);
-  if (typeof rawAnswer !== "string") return -1;
+  if (typeof rawAnswer !== "string") return null;
 
   const trimmed = rawAnswer.trim();
   const letterIndex = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".indexOf(trimmed.toUpperCase());
@@ -218,7 +220,8 @@ function normalizeAnswer(rawAnswer, options) {
   const numeric = Number(trimmed);
   if (Number.isInteger(numeric)) return numeric >= 1 ? numeric - 1 : numeric;
 
-  return options.findIndex((option) => option === trimmed);
+  const optionIndex = options.findIndex((option) => option === trimmed);
+  return optionIndex >= 0 ? optionIndex : null;
 }
 
 function handleImportFile(file) {
@@ -245,6 +248,115 @@ function handleImportFile(file) {
     }
   };
   reader.readAsText(file, "utf-8");
+}
+
+async function handlePdfFile(file) {
+  updateImportStatus("PDFを読み取っています...");
+  try {
+    const text = await extractPdfText(file);
+    const parsed = parsePdfQuestions(text, file.name);
+    if (!parsed.length) throw new Error("No questions parsed");
+
+    state.importedQuestions = parsed;
+    state.pastPosition = 0;
+    saveImportedQuestions();
+    renderYearOptions();
+    updateImportStatus(`${parsed.length}問をPDFから取り込みました`);
+    if (state.mode === "past") renderQuestion(getCurrentQuestion());
+  } catch (error) {
+    console.error(error);
+    updateImportStatus("PDFを解析できませんでした。文字選択できるPDFか確認してください");
+  } finally {
+    els.pdfFileInput.value = "";
+  }
+}
+
+async function extractPdfText(file) {
+  const pdfjsLib = await import("https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.min.mjs");
+  pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.min.mjs";
+
+  const buffer = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: buffer }).promise;
+  const pages = [];
+
+  for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+    const page = await pdf.getPage(pageNumber);
+    const content = await page.getTextContent();
+    const lines = content.items.map((item) => item.str).filter(Boolean);
+    pages.push(lines.join("\n"));
+  }
+
+  return pages.join("\n\n");
+}
+
+function parsePdfQuestions(text, fileName) {
+  const normalized = text
+    .replace(/\r/g, "\n")
+    .replace(/[ \t]+/g, " ")
+    .replace(/([問題]\s*\d+)/g, "\n$1")
+    .replace(/([1-9][0-9]?)[\.\)]\s*/g, "\n$1. ");
+
+  const chunks = normalized
+    .split(/\n(?=問題\s*\d+|問\s*\d+|\d{1,3}\s*[\.．]\s*)/g)
+    .map((chunk) => chunk.trim())
+    .filter((chunk) => chunk.length > 30);
+
+  const examInfo = inferPdfExamInfo(`${fileName}\n${text.slice(0, 500)}`);
+
+  return chunks
+    .map((chunk, index) => parsePdfQuestionChunk(chunk, index, examInfo))
+    .filter(Boolean);
+}
+
+function inferPdfExamInfo(sourceText) {
+  const examMatch = sourceText.match(/第\s*(\d{2,3})\s*回/);
+  const yearMatch = sourceText.match(/(20\d{2}|令和\s*\d+)\s*年/);
+  const examNumber = examMatch ? examMatch[1] : "PDF";
+  const year = yearMatch ? yearMatch[1].replace(/\s+/g, "") : "";
+  return {
+    exam: examNumber === "PDF" ? "PDF取込" : `第${examNumber}回`,
+    year,
+    yearKey: examNumber === "PDF" ? `pdf-${Date.now()}` : examNumber
+  };
+}
+
+function parsePdfQuestionChunk(chunk, index, examInfo) {
+  const lines = chunk.split("\n").map((line) => line.trim()).filter(Boolean);
+  const options = [];
+  const questionParts = [];
+
+  for (const line of lines) {
+    const optionMatch = line.match(/^(?:([1-9])[\.\)．、 ]+|[①②③④⑤⑥])(.{1,120})$/);
+    if (optionMatch) {
+      options.push(cleanPdfLine(optionMatch[2] || line.replace(/^[①②③④⑤⑥]/, "")));
+    } else if (!/^(午前|午後|必修問題|一般問題|状況設定問題|看護師国家試験)/.test(line)) {
+      questionParts.push(cleanPdfLine(line));
+    }
+  }
+
+  if (options.length < 2 || questionParts.length < 1) return null;
+
+  const question = questionParts.join(" ").replace(/^(問題|問)?\s*\d+\s*[\.．、]?\s*/, "").trim();
+  if (!question) return null;
+
+  return {
+    id: `pdf-${Date.now()}-${index}`,
+    source: "PDF取込",
+    exam: examInfo.exam,
+    year: examInfo.year,
+    yearKey: examInfo.yearKey,
+    category: "PDF取込",
+    difficulty: "標準",
+    question,
+    options: options.slice(0, 8),
+    answer: null,
+    explanation: "このPDFからは正答を自動判定できませんでした。正答表がある場合はJSON形式で取り込むと採点できます。",
+    note: "PDFから自動抽出した問題です。文字化けや分割ミスがある場合は元PDFを確認してください。"
+  };
+}
+
+function cleanPdfLine(line) {
+  return line.replace(/\s+/g, " ").replace(/^[①②③④⑤⑥]/, "").trim();
 }
 
 function downloadSampleJson() {
@@ -396,9 +508,11 @@ function renderQuestion(question) {
     button.innerHTML = `<span class="option-key">${String.fromCharCode(65 + index)}</span><span>${option}</span>`;
     button.addEventListener("click", () => chooseAnswer(index));
 
-    if (hasAnswered) {
+    if (hasAnswered && question.answer !== null) {
       if (index === question.answer) button.classList.add("correct");
       if (index === savedAnswer && savedAnswer !== question.answer) button.classList.add("wrong");
+    } else if (hasAnswered && index === savedAnswer) {
+      button.classList.add("correct");
     }
 
     els.optionsList.appendChild(button);
@@ -410,7 +524,7 @@ function renderQuestion(question) {
 function chooseAnswer(index) {
   if (!state.current || state.answers.has(state.current.id)) return;
   state.answers.set(state.current.id, index);
-  if (index !== state.current.answer) addMistake(state.current);
+  if (state.current.answer !== null && index !== state.current.answer) addMistake(state.current);
   renderQuestion(state.current);
 }
 
@@ -426,7 +540,7 @@ function renderStats() {
   const done = answers.length;
   const correct = answers.filter(([id, selected]) => {
     const question = allQuestions.find((item) => item.id === id);
-    return question && selected === question.answer;
+    return question && question.answer !== null && selected === question.answer;
   }).length;
   const rate = done ? Math.round((correct / done) * 100) : 0;
 
@@ -442,6 +556,7 @@ function getCurrentStreak() {
   let streak = 0;
   for (const question of allQuestions.slice().reverse()) {
     if (!state.answers.has(question.id)) continue;
+    if (question.answer === null) continue;
     if (state.answers.get(question.id) === question.answer) streak += 1;
     else break;
   }
@@ -511,6 +626,11 @@ els.importFileInput.addEventListener("change", (event) => {
   if (file) handleImportFile(file);
 });
 
+els.pdfFileInput.addEventListener("change", (event) => {
+  const [file] = event.target.files;
+  if (file) handlePdfFile(file);
+});
+
 els.sampleJsonBtn.addEventListener("click", downloadSampleJson);
 
 els.clearImportedBtn.addEventListener("click", () => {
@@ -545,7 +665,7 @@ els.showAnswerBtn.addEventListener("click", () => {
   if (!state.current) return;
   els.explanationBox.hidden = false;
   [...els.optionsList.children].forEach((button, index) => {
-    if (index === state.current.answer) button.classList.add("correct");
+    if (state.current.answer !== null && index === state.current.answer) button.classList.add("correct");
   });
 });
 

@@ -59,11 +59,14 @@
             <h2>題庫インポート</h2>
             <label class="file-picker" for="importFileInput">JSONを選択</label>
             <input id="importFileInput" type="file" accept="application/json,.json" />
+            <label class="file-picker" for="pdfFileInput">PDFを読み取る</label>
+            <input id="pdfFileInput" type="file" accept="application/pdf,.pdf" />
             <div class="import-actions">
               <button class="text-button" id="sampleJsonBtn" type="button">サンプル</button>
               <button class="text-button" id="clearImportedBtn" type="button">取込削除</button>
             </div>
             <p class="import-status" id="importStatus">取込済み: 0問</p>
+            <p class="import-hint">PDFは題号と選択肢を自動抽出します。正答がないPDFは採点なしで取り込まれます。</p>
           </div>
 
           <div class="panel-block">
