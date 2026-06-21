@@ -224,6 +224,37 @@ select {
   padding: 0 12px;
 }
 
+.import-block input[type="file"] {
+  display: none;
+}
+
+.file-picker {
+  display: grid;
+  place-items: center;
+  min-height: 42px;
+  border: 1px dashed var(--teal);
+  border-radius: 8px;
+  background: #f2faf8;
+  color: var(--teal-dark);
+  font-size: 13px;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.import-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.import-status {
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
 .primary-action {
   width: 100%;
   min-height: 48px;
