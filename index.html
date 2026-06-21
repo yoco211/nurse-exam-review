@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>看護師国家試験対策</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="topbar" aria-label="学習概要">
+        <div>
+          <p class="eyebrow">看護師国家試験</p>
+          <h1>看護師国家試験対策</h1>
+        </div>
+        <div class="top-actions" aria-label="クイック操作">
+          <button class="icon-button" id="resetBtn" type="button" title="進捗をリセット" aria-label="進捗をリセット">↻</button>
+          <button class="icon-button" id="shuffleBtn" type="button" title="ランダム出題" aria-label="ランダム出題">⇄</button>
+        </div>
+      </section>
+
+      <section class="hero-strip">
+        <div class="hero-copy">
+          <p>過去問とAI出題を切り替えながら、必修・人体構造・疾病看護・社会保障・在宅看護を効率よく復習できます。</p>
+        </div>
+        <img src="assets/nurse-study-hero.png" alt="看護学生が国家試験の勉強をしているイラスト" />
+      </section>
+
+      <section class="workspace" aria-label="復習ワークスペース">
+        <aside class="control-panel">
+          <div class="panel-block">
+            <h2>出題形式</h2>
+            <div class="segmented" role="tablist" aria-label="出題形式の選択">
+              <button class="segment active" id="modePast" type="button" role="tab" aria-selected="true">過去問</button>
+              <button class="segment" id="modeAi" type="button" role="tab" aria-selected="false">AI出題</button>
+            </div>
+          </div>
+
+          <div class="panel-block">
+            <h2>分野</h2>
+            <label class="select-label" for="categorySelect">練習範囲を選択</label>
+            <select id="categorySelect">
+              <option value="all">すべての分野</option>
+              <option value="必修">必修</option>
+              <option value="人体構造">人体構造</option>
+              <option value="疾病看護">疾病看護</option>
+              <option value="社会保障">社会保障</option>
+              <option value="在宅看護">在宅看護</option>
+            </select>
+          </div>
+
+          <div class="panel-block">
+            <h2>年度</h2>
+            <label class="select-label" for="yearSelect">過去問対策の年度</label>
+            <select id="yearSelect">
+              <option value="all">直近5回すべて</option>
+              <option value="115">第115回（2026年）</option>
+              <option value="114">第114回（2025年）</option>
+              <option value="113">第113回（2024年）</option>
+              <option value="112">第112回（2023年）</option>
+              <option value="111">第111回（2022年）</option>
+            </select>
+          </div>
+
+          <div class="panel-block">
+            <h2>難易度</h2>
+            <div class="difficulty-row" aria-label="AI出題の難易度">
+              <button class="chip active" type="button" data-difficulty="基礎">基礎</button>
+              <button class="chip" type="button" data-difficulty="標準">標準</button>
+              <button class="chip" type="button" data-difficulty="応用">応用</button>
+            </div>
+          </div>
+
+          <div class="nav-actions" aria-label="問題移動">
+            <button class="secondary-action nav-button" id="prevQuestionBtn" type="button">前の問題</button>
+            <button class="primary-action nav-button" id="newQuestionBtn" type="button">次の問題</button>
+          </div>
+        </aside>
+
+        <section class="question-panel" aria-live="polite">
+          <div class="question-meta">
+            <span id="sourceBadge">過去問</span>
+            <span id="categoryBadge">必修</span>
+            <span id="difficultyBadge">標準</span>
+            <span id="totalBadge">1 / 5</span>
+          </div>
+
+          <div class="question-head">
+            <p id="questionNumber">Q1 / 5</p>
+            <h2 id="questionText"></h2>
+          </div>
+
+          <div class="options-list" id="optionsList"></div>
+
+          <div class="answer-actions">
+            <button class="secondary-action" id="showAnswerBtn" type="button">解説を見る</button>
+            <button class="secondary-action" id="saveMistakeBtn" type="button">☆ 苦手問題に追加</button>
+          </div>
+
+          <div class="explanation" id="explanationBox" hidden>
+            <h3>解説</h3>
+            <p id="explanationText"></p>
+            <p class="jp-note" id="jpNote"></p>
+          </div>
+        </section>
+
+        <aside class="stats-panel">
+          <div class="stat-grid">
+            <div class="stat-cell">
+              <span id="doneCount">0</span>
+              <p>解答数</p>
+            </div>
+            <div class="stat-cell">
+              <span id="accuracyRate">0%</span>
+              <p>正答率</p>
+            </div>
+            <div class="stat-cell">
+              <span id="mistakeCount">0</span>
+              <p>苦手</p>
+            </div>
+            <div class="stat-cell">
+              <span id="streakCount">0</span>
+              <p>連続正解</p>
+            </div>
+          </div>
+
+          <div class="review-list">
+            <div class="section-title-row">
+              <h2>苦手リスト</h2>
+              <button class="text-button" id="clearMistakesBtn" type="button">クリア</button>
+            </div>
+            <ul id="mistakeList"></ul>
+          </div>
+
+          <div class="study-tip">
+            <h2>今日の学習メモ</h2>
+            <p id="studyTipText">まず過去問で出題傾向を確認し、AI出題で弱点を補強しましょう。</p>
+          </div>
+
+          <div class="source-list">
+            <h2>公式資料</h2>
+            <p>過去問の原文は著作権・利用条件を確認したうえで、厚生労働省などの公式資料から参照してください。</p>
+            <a href="https://www.mhlw.go.jp/kouseiroudoushou/shikaku_shiken/" target="_blank" rel="noreferrer">厚生労働省 資格・試験情報</a>
+          </div>
+        </aside>
+      </section>
+    </main>
+
+    <script src="app.js"></script>
+  </body>
+</html>
