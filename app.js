@@ -604,7 +604,7 @@ els.sampleJsonBtn.addEventListener("click", downloadSampleJson);
 
 els.clearImportedBtn.addEventListener("click", () => {
   state.importedQuestions = [];
-  localStorage.removeItem(IMPORT_STORAGE_KEY);
+  localStorage.removeItem(APP_STORAGE_KEYS.importedQuestions);
   state.answers.clear();
   state.mistakes = [];
   state.pastPosition = 0;
