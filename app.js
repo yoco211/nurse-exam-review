@@ -112,7 +112,6 @@ const els = {
   sampleJsonBtn: document.querySelector("#sampleJsonBtn"),
   clearImportedBtn: document.querySelector("#clearImportedBtn"),
   aiProviderSelect: document.querySelector("#aiProviderSelect"),
-  backendUrlInput: document.querySelector("#backendUrlInput"),
   backendStatus: document.querySelector("#backendStatus"),
   difficultyButtons: document.querySelectorAll("[data-difficulty]"),
   prevQuestionBtn: document.querySelector("#prevQuestionBtn"),
@@ -303,8 +302,8 @@ async function createAiQuestion() {
       source: "AI出題",
       category: state.category === "all" ? "AI" : state.category,
       difficulty: state.difficulty,
-      question: "AIバックエンドに接続できませんでした。Backend URLとAPIキー設定を確認してください。",
-      options: ["設定を確認する", "Backendを起動する"],
+      question: "AI出題サーバーに接続できませんでした。少し待って再試行するか、出題APIを切り替えてください。",
+      options: ["もう一度試す", "出題APIを切り替える"],
       answer: null,
       explanation: "GitHub PagesだけではAPIキーを安全に使えないため、Gemini / DeepSeekは後端サーバーから呼び出す必要があります。",
       note: error.message
@@ -326,7 +325,6 @@ async function requestAiQuestion() {
 
     state.backendUrl = DEFAULT_BACKEND_URL;
     localStorage.removeItem(APP_STORAGE_KEYS.backendUrl);
-    els.backendUrlInput.value = DEFAULT_BACKEND_URL;
     setBackendStatus("正式Backendで再試行中...");
     return fetchAiQuestion(getBackendEndpoint(DEFAULT_BACKEND_URL), payload);
   }
@@ -614,24 +612,12 @@ els.yearSelect.addEventListener("change", (event) => {
 });
 
 els.aiProviderSelect.value = state.aiProvider;
-els.backendUrlInput.value = state.backendUrl;
+localStorage.removeItem(APP_STORAGE_KEYS.backendUrl);
 
 els.aiProviderSelect.addEventListener("change", (event) => {
   state.aiProvider = event.target.value;
   localStorage.setItem(APP_STORAGE_KEYS.aiProvider, state.aiProvider);
   setBackendStatus(`${providerLabel(state.aiProvider)}を使用します`);
-});
-
-els.backendUrlInput.addEventListener("change", (event) => {
-  const value = event.target.value.trim();
-  state.backendUrl = normalizeBackendUrl(value);
-  els.backendUrlInput.value = state.backendUrl;
-  if (value && state.backendUrl !== DEFAULT_BACKEND_URL) {
-    localStorage.setItem(APP_STORAGE_KEYS.backendUrl, state.backendUrl);
-  } else {
-    localStorage.removeItem(APP_STORAGE_KEYS.backendUrl);
-  }
-  setBackendStatus(`Backend: ${state.backendUrl}`);
 });
 
 els.importFileInput.addEventListener("change", (event) => {
@@ -706,6 +692,6 @@ els.resetBtn.addEventListener("click", async () => {
 
 renderYearOptions();
 updateImportStatus();
-setBackendStatus(state.backendUrl ? `Backend: ${state.backendUrl}` : `Backend: ${DEFAULT_BACKEND_URL}`);
+setBackendStatus("AI出題を利用できます");
 renderMistakes();
 renderQuestion(getCurrentQuestion());
