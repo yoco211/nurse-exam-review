@@ -71,7 +71,6 @@ const aiTemplates = [
 ];
 
 const APP_STORAGE_KEYS = {
-  importedQuestions: "nurseExamImportedQuestions",
   aiProvider: "nurseExamAiProvider",
   backendUrl: "nurseExamBackendUrl"
 };
@@ -94,7 +93,6 @@ const state = {
   aiProvider: localStorage.getItem(APP_STORAGE_KEYS.aiProvider) || "deepseek",
   backendUrl: getStoredBackendUrl(),
   pastPosition: 0,
-  importedQuestions: readImportedQuestions(),
   aiHistory: [],
   aiPosition: -1,
   current: null,
@@ -107,10 +105,6 @@ const els = {
   modeAi: document.querySelector("#modeAi"),
   categorySelect: document.querySelector("#categorySelect"),
   yearSelect: document.querySelector("#yearSelect"),
-  importFileInput: document.querySelector("#importFileInput"),
-  importStatus: document.querySelector("#importStatus"),
-  sampleJsonBtn: document.querySelector("#sampleJsonBtn"),
-  clearImportedBtn: document.querySelector("#clearImportedBtn"),
   aiProviderSelect: document.querySelector("#aiProviderSelect"),
   backendStatus: document.querySelector("#backendStatus"),
   difficultyButtons: document.querySelectorAll("[data-difficulty]"),
@@ -139,21 +133,8 @@ const els = {
   studyTipText: document.querySelector("#studyTipText")
 };
 
-function readImportedQuestions() {
-  try {
-    const raw = localStorage.getItem(APP_STORAGE_KEYS.importedQuestions);
-    return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveImportedQuestions() {
-  localStorage.setItem(APP_STORAGE_KEYS.importedQuestions, JSON.stringify(state.importedQuestions));
-}
-
 function getAllPastQuestions() {
-  return [...defaultPastQuestions, ...state.importedQuestions];
+  return defaultPastQuestions;
 }
 
 function getFilteredPastQuestions() {
@@ -165,55 +146,16 @@ function getFilteredPastQuestions() {
 }
 
 function renderYearOptions() {
-  const importedYears = state.importedQuestions
-    .map((item) => [item.yearKey, item.exam ? `${item.exam}${item.year ? `（${item.year}年）` : ""}` : item.yearKey])
-    .filter(([key]) => key && !BUILT_IN_YEARS.some(([builtInKey]) => builtInKey === key));
-  const uniqueImportedYears = [...new Map(importedYears).entries()].map(([key, label]) => [key, `${label}・取込`]);
-  const options = [...BUILT_IN_YEARS, ...uniqueImportedYears];
-
   els.yearSelect.innerHTML = "";
-  options.forEach(([value, label]) => {
+  BUILT_IN_YEARS.forEach(([value, label]) => {
     const option = document.createElement("option");
     option.value = value;
     option.textContent = label;
     els.yearSelect.appendChild(option);
   });
 
-  if (!options.some(([value]) => value === state.yearFilter)) state.yearFilter = "all";
+  if (!BUILT_IN_YEARS.some(([value]) => value === state.yearFilter)) state.yearFilter = "all";
   els.yearSelect.value = state.yearFilter;
-}
-
-function updateImportStatus(message) {
-  const count = state.importedQuestions.length;
-  els.importStatus.textContent = message || `取込済み: ${count}問`;
-}
-
-function normalizeImportedQuestion(item, index) {
-  const options = Array.isArray(item.options) ? item.options.map(String) : [];
-  if (!item.question || options.length < 2) return null;
-
-  const answer = normalizeAnswer(item.answer ?? item.answerIndex ?? item.correctIndex ?? item.correctAnswer, options);
-  if (answer !== null && (answer < 0 || answer >= options.length)) return null;
-
-  const examRaw = String(item.exam || item.examNumber || item.yearKey || "取込");
-  const exam = item.exam ? String(item.exam) : examRaw.startsWith("第") ? examRaw : `第${examRaw}回`;
-  const year = item.year ? String(item.year) : "";
-  const yearKey = String(item.yearKey || item.examNumber || year || examRaw || "imported");
-
-  return {
-    id: `import-${Date.now()}-${index}`,
-    source: item.source ? String(item.source) : "取込過去問",
-    exam,
-    year,
-    yearKey,
-    category: item.category ? String(item.category) : "取込",
-    difficulty: item.difficulty ? String(item.difficulty) : "標準",
-    question: String(item.question),
-    options,
-    answer,
-    explanation: item.explanation ? String(item.explanation) : "解説はインポート元の資料を確認してください。",
-    note: item.note ? String(item.note) : "インポートした問題です。出典と利用条件を確認してください。"
-  };
 }
 
 function normalizeAnswer(rawAnswer, options) {
@@ -231,59 +173,6 @@ function normalizeAnswer(rawAnswer, options) {
 
   const optionIndex = options.findIndex((option) => option === trimmed);
   return optionIndex >= 0 ? optionIndex : null;
-}
-
-function handleImportFile(file) {
-  const reader = new FileReader();
-  reader.onload = () => {
-    try {
-      const parsed = JSON.parse(String(reader.result));
-      const source = Array.isArray(parsed) ? parsed : parsed.questions;
-      if (!Array.isArray(source)) throw new Error("questions array missing");
-
-      const normalized = source.map(normalizeImportedQuestion).filter(Boolean);
-      if (!normalized.length) throw new Error("valid questions missing");
-
-      state.importedQuestions = normalized;
-      state.pastPosition = 0;
-      saveImportedQuestions();
-      renderYearOptions();
-      updateImportStatus(`${normalized.length}問を取り込みました`);
-      if (state.mode === "past") renderQuestion(getCurrentQuestion());
-    } catch {
-      updateImportStatus("JSON形式を確認してください");
-    } finally {
-      els.importFileInput.value = "";
-    }
-  };
-  reader.readAsText(file, "utf-8");
-}
-
-function downloadSampleJson() {
-  const sample = {
-    questions: [
-      {
-        source: "取込過去問",
-        exam: "第114回",
-        year: "2025",
-        yearKey: "114",
-        category: "必修",
-        difficulty: "標準",
-        question: "サンプル問題の本文をここに入れます。",
-        options: ["選択肢A", "選択肢B", "選択肢C", "選択肢D"],
-        answer: "A",
-        explanation: "解説文をここに入れます。",
-        note: "出典やメモをここに入れます。"
-      }
-    ]
-  };
-  const blob = new Blob([JSON.stringify(sample, null, 2)], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = "nurse-exam-sample.json";
-  link.click();
-  URL.revokeObjectURL(url);
 }
 
 async function createAiQuestion() {
@@ -620,25 +509,6 @@ els.aiProviderSelect.addEventListener("change", (event) => {
   setBackendStatus(`${providerLabel(state.aiProvider)}を使用します`);
 });
 
-els.importFileInput.addEventListener("change", (event) => {
-  const [file] = event.target.files;
-  if (file) handleImportFile(file);
-});
-
-els.sampleJsonBtn.addEventListener("click", downloadSampleJson);
-
-els.clearImportedBtn.addEventListener("click", () => {
-  state.importedQuestions = [];
-  localStorage.removeItem(APP_STORAGE_KEYS.importedQuestions);
-  state.answers.clear();
-  state.mistakes = [];
-  state.pastPosition = 0;
-  renderYearOptions();
-  updateImportStatus("取込データを削除しました");
-  renderMistakes();
-  renderQuestion(getCurrentQuestion());
-});
-
 els.difficultyButtons.forEach((button) => {
   button.addEventListener("click", async () => {
     state.difficulty = button.dataset.difficulty;
@@ -691,7 +561,6 @@ els.resetBtn.addEventListener("click", async () => {
 });
 
 renderYearOptions();
-updateImportStatus();
 setBackendStatus("AI出題を利用できます");
 renderMistakes();
 renderQuestion(getCurrentQuestion());
