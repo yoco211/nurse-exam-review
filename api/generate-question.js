@@ -18,11 +18,9 @@ module.exports = async function handler(req, res) {
     const difficulty = String(body.difficulty || "標準");
     const prompt = buildQuestionPrompt(category, difficulty);
 
-    const question = provider === "deepseek"
-      ? await generateWithDeepSeek(prompt)
-      : await generateWithGemini(prompt);
+    const result = await generateQuestion(provider, prompt);
 
-    res.status(200).json({ provider, question });
+    res.status(200).json(result);
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: error.message || "AI generation failed" });
@@ -33,6 +31,24 @@ function setCorsHeaders(res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "POST,OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type,Authorization");
+}
+
+async function generateQuestion(provider, prompt) {
+  if (provider === "deepseek") {
+    return { provider: "deepseek", question: await generateWithDeepSeek(prompt) };
+  }
+
+  try {
+    return { provider: "gemini", question: await generateWithGemini(prompt) };
+  } catch (error) {
+    if (!process.env.DEEPSEEK_API_KEY) throw error;
+    console.warn(`Gemini failed, falling back to DeepSeek: ${error.message}`);
+    return {
+      provider: "deepseek",
+      fallbackFrom: "gemini",
+      question: await generateWithDeepSeek(prompt)
+    };
+  }
 }
 
 function buildQuestionPrompt(category, difficulty) {
@@ -54,8 +70,11 @@ async function generateWithGemini(prompt) {
   if (!apiKey) throw new Error("GEMINI_API_KEY is not set");
 
   const model = process.env.GEMINI_MODEL || "gemini-3.5-flash";
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 22000);
   const response = await fetch("https://generativelanguage.googleapis.com/v1beta/interactions", {
     method: "POST",
+    signal: controller.signal,
     headers: {
       "Content-Type": "application/json",
       "x-goog-api-key": apiKey
@@ -64,9 +83,9 @@ async function generateWithGemini(prompt) {
       model,
       system_instruction: "Return only valid JSON.",
       input: prompt,
-      generation_config: { temperature: 0.8 }
+      generation_config: { temperature: 0.7, thinking_level: "low" }
     })
-  });
+  }).finally(() => clearTimeout(timeout));
 
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.error?.message || `Gemini API error ${response.status}`);
@@ -78,8 +97,11 @@ async function generateWithDeepSeek(prompt) {
   if (!apiKey) throw new Error("DEEPSEEK_API_KEY is not set");
 
   const model = process.env.DEEPSEEK_MODEL || "deepseek-v4-flash";
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 22000);
   const response = await fetch("https://api.deepseek.com/chat/completions", {
     method: "POST",
+    signal: controller.signal,
     headers: {
       "Content-Type": "application/json",
       "Authorization": `Bearer ${apiKey}`
@@ -92,9 +114,9 @@ async function generateWithDeepSeek(prompt) {
       ],
       response_format: { type: "json_object" },
       stream: false,
-      temperature: 0.8
+      temperature: 0.7
     })
-  });
+  }).finally(() => clearTimeout(timeout));
 
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.error?.message || `DeepSeek API error ${response.status}`);

@@ -91,8 +91,8 @@ const state = {
   category: "all",
   yearFilter: "all",
   difficulty: "基礎",
-  aiProvider: localStorage.getItem(APP_STORAGE_KEYS.aiProvider) || "gemini",
-  backendUrl: localStorage.getItem(APP_STORAGE_KEYS.backendUrl) || DEFAULT_BACKEND_URL,
+  aiProvider: localStorage.getItem(APP_STORAGE_KEYS.aiProvider) || "deepseek",
+  backendUrl: getStoredBackendUrl(),
   pastPosition: 0,
   importedQuestions: readImportedQuestions(),
   aiHistory: [],
@@ -290,24 +290,11 @@ function downloadSampleJson() {
 async function createAiQuestion() {
   setBackendStatus(`${providerLabel(state.aiProvider)}で生成中...`);
   try {
-    const endpoint = getBackendEndpoint();
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        provider: state.aiProvider,
-        category: state.category === "all" ? "必修・人体構造・疾病看護・社会保障・在宅看護" : state.category,
-        difficulty: state.difficulty
-      })
-    });
-
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      throw new Error(data.error || `HTTP ${response.status}`);
-    }
-
-    setBackendStatus(`${providerLabel(state.aiProvider)}で生成しました`);
-    return normalizeAiQuestion(data.question || data, state.aiProvider);
+    const data = await requestAiQuestion();
+    const provider = data.provider || state.aiProvider;
+    const fallbackText = data.fallbackFrom ? `（${providerLabel(data.fallbackFrom)}から切替）` : "";
+    setBackendStatus(`${providerLabel(provider)}で生成しました${fallbackText}`);
+    return normalizeAiQuestion(data.question || data, provider);
   } catch (error) {
     console.error(error);
     setBackendStatus(`生成失敗: ${error.message}`);
@@ -325,9 +312,55 @@ async function createAiQuestion() {
   }
 }
 
-function getBackendEndpoint() {
-  const base = state.backendUrl.trim().replace(/\/$/, "");
+async function requestAiQuestion() {
+  const payload = {
+    provider: state.aiProvider,
+    category: state.category === "all" ? "必修・人体構造・疾病看護・社会保障・在宅看護" : state.category,
+    difficulty: state.difficulty
+  };
+
+  try {
+    return await fetchAiQuestion(getBackendEndpoint(state.backendUrl), payload);
+  } catch (error) {
+    if (normalizeBackendUrl(state.backendUrl) === DEFAULT_BACKEND_URL) throw error;
+
+    state.backendUrl = DEFAULT_BACKEND_URL;
+    localStorage.removeItem(APP_STORAGE_KEYS.backendUrl);
+    els.backendUrlInput.value = DEFAULT_BACKEND_URL;
+    setBackendStatus("正式Backendで再試行中...");
+    return fetchAiQuestion(getBackendEndpoint(DEFAULT_BACKEND_URL), payload);
+  }
+}
+
+async function fetchAiQuestion(endpoint, payload) {
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(data.error || `HTTP ${response.status}`);
+  }
+  return data;
+}
+
+function getBackendEndpoint(backendUrl = state.backendUrl) {
+  const base = normalizeBackendUrl(backendUrl).replace(/\/$/, "");
   return base ? `${base}/api/generate-question` : "/api/generate-question";
+}
+
+function getStoredBackendUrl() {
+  return normalizeBackendUrl(localStorage.getItem(APP_STORAGE_KEYS.backendUrl));
+}
+
+function normalizeBackendUrl(value) {
+  const url = String(value || "").trim();
+  if (!url || url.includes("localhost") || url.includes("127.0.0.1")) {
+    return DEFAULT_BACKEND_URL;
+  }
+  return url;
 }
 
 function normalizeAiQuestion(raw, provider) {
@@ -590,9 +623,15 @@ els.aiProviderSelect.addEventListener("change", (event) => {
 });
 
 els.backendUrlInput.addEventListener("change", (event) => {
-  state.backendUrl = event.target.value.trim();
-  localStorage.setItem(APP_STORAGE_KEYS.backendUrl, state.backendUrl);
-  setBackendStatus(state.backendUrl ? `Backend: ${state.backendUrl}` : `Backend: ${DEFAULT_BACKEND_URL}`);
+  const value = event.target.value.trim();
+  state.backendUrl = normalizeBackendUrl(value);
+  els.backendUrlInput.value = state.backendUrl;
+  if (value && state.backendUrl !== DEFAULT_BACKEND_URL) {
+    localStorage.setItem(APP_STORAGE_KEYS.backendUrl, state.backendUrl);
+  } else {
+    localStorage.removeItem(APP_STORAGE_KEYS.backendUrl);
+  }
+  setBackendStatus(`Backend: ${state.backendUrl}`);
 });
 
 els.importFileInput.addEventListener("change", (event) => {
