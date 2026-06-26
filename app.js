@@ -75,6 +75,7 @@ const APP_STORAGE_KEYS = {
   aiProvider: "nurseExamAiProvider",
   backendUrl: "nurseExamBackendUrl"
 };
+const DEFAULT_BACKEND_URL = "https://nurse-exam-review-backend.vercel.app";
 
 const BUILT_IN_YEARS = [
   ["all", "直近5回すべて"],
@@ -91,7 +92,7 @@ const state = {
   yearFilter: "all",
   difficulty: "基礎",
   aiProvider: localStorage.getItem(APP_STORAGE_KEYS.aiProvider) || "gemini",
-  backendUrl: localStorage.getItem(APP_STORAGE_KEYS.backendUrl) || "",
+  backendUrl: localStorage.getItem(APP_STORAGE_KEYS.backendUrl) || DEFAULT_BACKEND_URL,
   pastPosition: 0,
   importedQuestions: readImportedQuestions(),
   aiHistory: [],
@@ -591,7 +592,7 @@ els.aiProviderSelect.addEventListener("change", (event) => {
 els.backendUrlInput.addEventListener("change", (event) => {
   state.backendUrl = event.target.value.trim();
   localStorage.setItem(APP_STORAGE_KEYS.backendUrl, state.backendUrl);
-  setBackendStatus(state.backendUrl ? `Backend: ${state.backendUrl}` : "Backend未設定時は同一URLの /api を使用します。");
+  setBackendStatus(state.backendUrl ? `Backend: ${state.backendUrl}` : `Backend: ${DEFAULT_BACKEND_URL}`);
 });
 
 els.importFileInput.addEventListener("change", (event) => {
@@ -666,6 +667,6 @@ els.resetBtn.addEventListener("click", async () => {
 
 renderYearOptions();
 updateImportStatus();
-setBackendStatus(state.backendUrl ? `Backend: ${state.backendUrl}` : "Backend未設定時は同一URLの /api を使用します。");
+setBackendStatus(state.backendUrl ? `Backend: ${state.backendUrl}` : `Backend: ${DEFAULT_BACKEND_URL}`);
 renderMistakes();
 renderQuestion(getCurrentQuestion());
