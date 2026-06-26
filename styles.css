@@ -28,6 +28,7 @@ body {
 }
 
 button,
+input,
 select {
   font: inherit;
 }
@@ -214,6 +215,7 @@ button {
   font-weight: 700;
 }
 
+input,
 select {
   width: 100%;
   min-height: 44px;
@@ -222,6 +224,10 @@ select {
   background: var(--surface);
   color: var(--ink);
   padding: 0 12px;
+}
+
+input::placeholder {
+  color: #9aa6a2;
 }
 
 .import-block input[type="file"] {
@@ -249,16 +255,11 @@ select {
   margin-top: 10px;
 }
 
-.import-status,
-.import-hint {
+.import-status {
   margin: 10px 0 0;
   color: var(--muted);
   font-size: 13px;
   line-height: 1.45;
-}
-
-.import-hint {
-  font-size: 12px;
 }
 
 .primary-action {

@@ -62,7 +62,7 @@ const aiTemplates = [
     points: ["地域包括ケアは医療、介護、予防、住まい、生活支援を一体的に提供する考え方である。", "公的医療保険は医療費負担を社会全体で支える制度である。"]
   },
   {
-    category: "在宅看護",
+  category: "在宅看護",
     stems: ["訪問看護で利用者の自己決定を支える対応はどれか。", "在宅療養者の家族支援で適切なのはどれか。"],
     options: [["選択肢を説明し意思を確認する", "看護師がすべて決定する", "本人の希望を聞かない", "家族の都合のみを優先する"], ["介護負担と休息状況を確認する", "家族の訴えを聞かない", "介護方法を説明しない", "相談先を知らせない"]],
     answers: [0, 0],
@@ -70,7 +70,12 @@ const aiTemplates = [
   }
 ];
 
-const IMPORT_STORAGE_KEY = "nurseExamImportedQuestions";
+const APP_STORAGE_KEYS = {
+  importedQuestions: "nurseExamImportedQuestions",
+  aiProvider: "nurseExamAiProvider",
+  backendUrl: "nurseExamBackendUrl"
+};
+
 const BUILT_IN_YEARS = [
   ["all", "直近5回すべて"],
   ["115", "第115回（2026年）"],
@@ -85,6 +90,8 @@ const state = {
   category: "all",
   yearFilter: "all",
   difficulty: "基礎",
+  aiProvider: localStorage.getItem(APP_STORAGE_KEYS.aiProvider) || "gemini",
+  backendUrl: localStorage.getItem(APP_STORAGE_KEYS.backendUrl) || "",
   pastPosition: 0,
   importedQuestions: readImportedQuestions(),
   aiHistory: [],
@@ -100,10 +107,12 @@ const els = {
   categorySelect: document.querySelector("#categorySelect"),
   yearSelect: document.querySelector("#yearSelect"),
   importFileInput: document.querySelector("#importFileInput"),
-  pdfFileInput: document.querySelector("#pdfFileInput"),
   importStatus: document.querySelector("#importStatus"),
   sampleJsonBtn: document.querySelector("#sampleJsonBtn"),
   clearImportedBtn: document.querySelector("#clearImportedBtn"),
+  aiProviderSelect: document.querySelector("#aiProviderSelect"),
+  backendUrlInput: document.querySelector("#backendUrlInput"),
+  backendStatus: document.querySelector("#backendStatus"),
   difficultyButtons: document.querySelectorAll("[data-difficulty]"),
   prevQuestionBtn: document.querySelector("#prevQuestionBtn"),
   newQuestionBtn: document.querySelector("#newQuestionBtn"),
@@ -132,7 +141,7 @@ const els = {
 
 function readImportedQuestions() {
   try {
-    const raw = localStorage.getItem(IMPORT_STORAGE_KEY);
+    const raw = localStorage.getItem(APP_STORAGE_KEYS.importedQuestions);
     return raw ? JSON.parse(raw) : [];
   } catch {
     return [];
@@ -140,7 +149,7 @@ function readImportedQuestions() {
 }
 
 function saveImportedQuestions() {
-  localStorage.setItem(IMPORT_STORAGE_KEY, JSON.stringify(state.importedQuestions));
+  localStorage.setItem(APP_STORAGE_KEYS.importedQuestions, JSON.stringify(state.importedQuestions));
 }
 
 function getAllPastQuestions() {
@@ -250,115 +259,6 @@ function handleImportFile(file) {
   reader.readAsText(file, "utf-8");
 }
 
-async function handlePdfFile(file) {
-  updateImportStatus("PDFを読み取っています...");
-  try {
-    const text = await extractPdfText(file);
-    const parsed = parsePdfQuestions(text, file.name);
-    if (!parsed.length) throw new Error("No questions parsed");
-
-    state.importedQuestions = parsed;
-    state.pastPosition = 0;
-    saveImportedQuestions();
-    renderYearOptions();
-    updateImportStatus(`${parsed.length}問をPDFから取り込みました`);
-    if (state.mode === "past") renderQuestion(getCurrentQuestion());
-  } catch (error) {
-    console.error(error);
-    updateImportStatus("PDFを解析できませんでした。文字選択できるPDFか確認してください");
-  } finally {
-    els.pdfFileInput.value = "";
-  }
-}
-
-async function extractPdfText(file) {
-  const pdfjsLib = await import("https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.min.mjs");
-  pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.min.mjs";
-
-  const buffer = await file.arrayBuffer();
-  const pdf = await pdfjsLib.getDocument({ data: buffer }).promise;
-  const pages = [];
-
-  for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
-    const page = await pdf.getPage(pageNumber);
-    const content = await page.getTextContent();
-    const lines = content.items.map((item) => item.str).filter(Boolean);
-    pages.push(lines.join("\n"));
-  }
-
-  return pages.join("\n\n");
-}
-
-function parsePdfQuestions(text, fileName) {
-  const normalized = text
-    .replace(/\r/g, "\n")
-    .replace(/[ \t]+/g, " ")
-    .replace(/([問題]\s*\d+)/g, "\n$1")
-    .replace(/([1-9][0-9]?)[\.\)]\s*/g, "\n$1. ");
-
-  const chunks = normalized
-    .split(/\n(?=問題\s*\d+|問\s*\d+|\d{1,3}\s*[\.．]\s*)/g)
-    .map((chunk) => chunk.trim())
-    .filter((chunk) => chunk.length > 30);
-
-  const examInfo = inferPdfExamInfo(`${fileName}\n${text.slice(0, 500)}`);
-
-  return chunks
-    .map((chunk, index) => parsePdfQuestionChunk(chunk, index, examInfo))
-    .filter(Boolean);
-}
-
-function inferPdfExamInfo(sourceText) {
-  const examMatch = sourceText.match(/第\s*(\d{2,3})\s*回/);
-  const yearMatch = sourceText.match(/(20\d{2}|令和\s*\d+)\s*年/);
-  const examNumber = examMatch ? examMatch[1] : "PDF";
-  const year = yearMatch ? yearMatch[1].replace(/\s+/g, "") : "";
-  return {
-    exam: examNumber === "PDF" ? "PDF取込" : `第${examNumber}回`,
-    year,
-    yearKey: examNumber === "PDF" ? `pdf-${Date.now()}` : examNumber
-  };
-}
-
-function parsePdfQuestionChunk(chunk, index, examInfo) {
-  const lines = chunk.split("\n").map((line) => line.trim()).filter(Boolean);
-  const options = [];
-  const questionParts = [];
-
-  for (const line of lines) {
-    const optionMatch = line.match(/^(?:([1-9])[\.\)．、 ]+|[①②③④⑤⑥])(.{1,120})$/);
-    if (optionMatch) {
-      options.push(cleanPdfLine(optionMatch[2] || line.replace(/^[①②③④⑤⑥]/, "")));
-    } else if (!/^(午前|午後|必修問題|一般問題|状況設定問題|看護師国家試験)/.test(line)) {
-      questionParts.push(cleanPdfLine(line));
-    }
-  }
-
-  if (options.length < 2 || questionParts.length < 1) return null;
-
-  const question = questionParts.join(" ").replace(/^(問題|問)?\s*\d+\s*[\.．、]?\s*/, "").trim();
-  if (!question) return null;
-
-  return {
-    id: `pdf-${Date.now()}-${index}`,
-    source: "PDF取込",
-    exam: examInfo.exam,
-    year: examInfo.year,
-    yearKey: examInfo.yearKey,
-    category: "PDF取込",
-    difficulty: "標準",
-    question,
-    options: options.slice(0, 8),
-    answer: null,
-    explanation: "このPDFからは正答を自動判定できませんでした。正答表がある場合はJSON形式で取り込むと採点できます。",
-    note: "PDFから自動抽出した問題です。文字化けや分割ミスがある場合は元PDFを確認してください。"
-  };
-}
-
-function cleanPdfLine(line) {
-  return line.replace(/\s+/g, " ").replace(/^[①②③④⑤⑥]/, "").trim();
-}
-
 function downloadSampleJson() {
   const sample = {
     questions: [
@@ -386,21 +286,75 @@ function downloadSampleJson() {
   URL.revokeObjectURL(url);
 }
 
-function createAiQuestion() {
-  const pool = state.category === "all" ? aiTemplates : aiTemplates.filter((item) => item.category === state.category);
-  const template = pool[Math.floor(Math.random() * pool.length)];
-  const variantIndex = Math.floor(Math.random() * template.stems.length);
+async function createAiQuestion() {
+  setBackendStatus(`${providerLabel(state.aiProvider)}で生成中...`);
+  try {
+    const endpoint = getBackendEndpoint();
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        provider: state.aiProvider,
+        category: state.category === "all" ? "必修・人体構造・疾病看護・社会保障・在宅看護" : state.category,
+        difficulty: state.difficulty
+      })
+    });
+
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(data.error || `HTTP ${response.status}`);
+    }
+
+    setBackendStatus(`${providerLabel(state.aiProvider)}で生成しました`);
+    return normalizeAiQuestion(data.question || data, state.aiProvider);
+  } catch (error) {
+    console.error(error);
+    setBackendStatus(`生成失敗: ${error.message}`);
+    return {
+      id: `ai-error-${Date.now()}`,
+      source: "AI出題",
+      category: state.category === "all" ? "AI" : state.category,
+      difficulty: state.difficulty,
+      question: "AIバックエンドに接続できませんでした。Backend URLとAPIキー設定を確認してください。",
+      options: ["設定を確認する", "Backendを起動する"],
+      answer: null,
+      explanation: "GitHub PagesだけではAPIキーを安全に使えないため、Gemini / DeepSeekは後端サーバーから呼び出す必要があります。",
+      note: error.message
+    };
+  }
+}
+
+function getBackendEndpoint() {
+  const base = state.backendUrl.trim().replace(/\/$/, "");
+  return base ? `${base}/api/generate-question` : "/api/generate-question";
+}
+
+function normalizeAiQuestion(raw, provider) {
+  const options = Array.isArray(raw.options) ? raw.options.map(String).slice(0, 6) : [];
+  const answer = normalizeAnswer(raw.answer ?? raw.correctAnswer ?? raw.answerIndex, options);
+  if (!raw.question || options.length < 2 || answer === null) {
+    throw new Error("AI response format is invalid");
+  }
+
   return {
-    id: `ai-${Date.now()}-${Math.random().toString(16).slice(2)}`,
-    source: "AI出題",
-    category: template.category,
-    difficulty: state.difficulty,
-    question: `${template.stems[variantIndex]}（${state.difficulty}）`,
-    options: template.options[variantIndex],
-    answer: template.answers[variantIndex],
-    explanation: `${template.points[variantIndex]} この問題はローカルのAI出題サンプルです。必要に応じて実際のAI APIに接続できます。`,
-    note: "解答後は、同じ知識を過去問で確認すると定着しやすい。"
+    id: `ai-${provider}-${Date.now()}`,
+    source: `AI出題｜${providerLabel(provider)}`,
+    category: raw.category ? String(raw.category) : (state.category === "all" ? "AI" : state.category),
+    difficulty: raw.difficulty ? String(raw.difficulty) : state.difficulty,
+    question: String(raw.question),
+    options,
+    answer,
+    explanation: raw.explanation ? String(raw.explanation) : "AIが生成した解説です。",
+    note: raw.note ? String(raw.note) : "後端APIから生成された問題です。"
   };
+}
+
+function providerLabel(provider) {
+  return provider === "deepseek" ? "DeepSeek" : "Gemini";
+}
+
+function setBackendStatus(message) {
+  els.backendStatus.textContent = message;
 }
 
 function getCurrentList() {
@@ -417,9 +371,9 @@ function getCurrentQuestion() {
   return list[getCurrentPosition()];
 }
 
-function ensureAiQuestion() {
+async function ensureAiQuestion() {
   if (state.aiHistory.length) return;
-  state.aiHistory.push(createAiQuestion());
+  state.aiHistory.push(await createAiQuestion());
   state.aiPosition = 0;
 }
 
@@ -428,7 +382,7 @@ function clampPastPosition() {
   state.pastPosition = list.length ? Math.min(state.pastPosition, list.length - 1) : 0;
 }
 
-function goNextQuestion() {
+async function goNextQuestion() {
   if (state.mode === "past") {
     const list = getFilteredPastQuestions();
     if (!list.length) return;
@@ -436,7 +390,7 @@ function goNextQuestion() {
   } else if (state.aiPosition < state.aiHistory.length - 1) {
     state.aiPosition += 1;
   } else {
-    state.aiHistory.push(createAiQuestion());
+    state.aiHistory.push(await createAiQuestion());
     state.aiPosition = state.aiHistory.length - 1;
   }
   renderQuestion(getCurrentQuestion());
@@ -453,13 +407,13 @@ function goPrevQuestion() {
   renderQuestion(getCurrentQuestion());
 }
 
-function goRandomQuestion() {
+async function goRandomQuestion() {
   if (state.mode === "past") {
     const list = getFilteredPastQuestions();
     if (!list.length) return;
     state.pastPosition = Math.floor(Math.random() * list.length);
   } else {
-    state.aiHistory.push(createAiQuestion());
+    state.aiHistory.push(await createAiQuestion());
     state.aiPosition = state.aiHistory.length - 1;
   }
   renderQuestion(getCurrentQuestion());
@@ -592,13 +546,13 @@ function updateTip(done) {
   }
 }
 
-function setMode(mode) {
+async function setMode(mode) {
   state.mode = mode;
   els.modePast.classList.toggle("active", mode === "past");
   els.modeAi.classList.toggle("active", mode === "ai");
   els.modePast.setAttribute("aria-selected", String(mode === "past"));
   els.modeAi.setAttribute("aria-selected", String(mode === "ai"));
-  if (mode === "ai") ensureAiQuestion();
+  if (mode === "ai") await ensureAiQuestion();
   if (mode === "past") clampPastPosition();
   renderQuestion(getCurrentQuestion());
 }
@@ -608,8 +562,12 @@ function resetPastPosition() {
   renderQuestion(getCurrentQuestion());
 }
 
-els.modePast.addEventListener("click", () => setMode("past"));
-els.modeAi.addEventListener("click", () => setMode("ai"));
+els.modePast.addEventListener("click", () => {
+  void setMode("past");
+});
+els.modeAi.addEventListener("click", () => {
+  void setMode("ai");
+});
 
 els.categorySelect.addEventListener("change", (event) => {
   state.category = event.target.value;
@@ -621,14 +579,24 @@ els.yearSelect.addEventListener("change", (event) => {
   resetPastPosition();
 });
 
+els.aiProviderSelect.value = state.aiProvider;
+els.backendUrlInput.value = state.backendUrl;
+
+els.aiProviderSelect.addEventListener("change", (event) => {
+  state.aiProvider = event.target.value;
+  localStorage.setItem(APP_STORAGE_KEYS.aiProvider, state.aiProvider);
+  setBackendStatus(`${providerLabel(state.aiProvider)}を使用します`);
+});
+
+els.backendUrlInput.addEventListener("change", (event) => {
+  state.backendUrl = event.target.value.trim();
+  localStorage.setItem(APP_STORAGE_KEYS.backendUrl, state.backendUrl);
+  setBackendStatus(state.backendUrl ? `Backend: ${state.backendUrl}` : "Backend未設定時は同一URLの /api を使用します。");
+});
+
 els.importFileInput.addEventListener("change", (event) => {
   const [file] = event.target.files;
   if (file) handleImportFile(file);
-});
-
-els.pdfFileInput.addEventListener("change", (event) => {
-  const [file] = event.target.files;
-  if (file) handlePdfFile(file);
 });
 
 els.sampleJsonBtn.addEventListener("click", downloadSampleJson);
@@ -646,12 +614,12 @@ els.clearImportedBtn.addEventListener("click", () => {
 });
 
 els.difficultyButtons.forEach((button) => {
-  button.addEventListener("click", () => {
+  button.addEventListener("click", async () => {
     state.difficulty = button.dataset.difficulty;
     els.difficultyButtons.forEach((item) => item.classList.remove("active"));
     button.classList.add("active");
     if (state.mode === "ai") {
-      state.aiHistory.push(createAiQuestion());
+      state.aiHistory.push(await createAiQuestion());
       state.aiPosition = state.aiHistory.length - 1;
       renderQuestion(getCurrentQuestion());
     }
@@ -659,8 +627,12 @@ els.difficultyButtons.forEach((button) => {
 });
 
 els.prevQuestionBtn.addEventListener("click", goPrevQuestion);
-els.newQuestionBtn.addEventListener("click", goNextQuestion);
-els.shuffleBtn.addEventListener("click", goRandomQuestion);
+els.newQuestionBtn.addEventListener("click", () => {
+  void goNextQuestion();
+});
+els.shuffleBtn.addEventListener("click", () => {
+  void goRandomQuestion();
+});
 els.showAnswerBtn.addEventListener("click", () => {
   if (!state.current) return;
   els.explanationBox.hidden = false;
@@ -681,18 +653,19 @@ els.clearMistakesBtn.addEventListener("click", () => {
   renderStats();
 });
 
-els.resetBtn.addEventListener("click", () => {
+els.resetBtn.addEventListener("click", async () => {
   state.answers.clear();
   state.mistakes = [];
   state.aiHistory = [];
   state.aiPosition = -1;
   state.pastPosition = 0;
-  if (state.mode === "ai") ensureAiQuestion();
+  if (state.mode === "ai") await ensureAiQuestion();
   renderMistakes();
   renderQuestion(getCurrentQuestion());
 });
 
 renderYearOptions();
 updateImportStatus();
+setBackendStatus(state.backendUrl ? `Backend: ${state.backendUrl}` : "Backend未設定時は同一URLの /api を使用します。");
 renderMistakes();
 renderQuestion(getCurrentQuestion());
