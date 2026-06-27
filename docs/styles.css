@@ -475,6 +475,21 @@ input::placeholder {
   text-decoration: none;
 }
 
+.source-links {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.source-links a {
+  margin-top: 0;
+}
+
+.source-note {
+  margin-top: 12px !important;
+  font-size: 13px;
+}
+
 @media (max-width: 1120px) {
   .workspace {
     grid-template-columns: 220px 1fr;
