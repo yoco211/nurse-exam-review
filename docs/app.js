@@ -353,7 +353,7 @@ function updateAiRefreshControl() {
   if (!els.aiRefreshBtn) return;
   const isAiMode = state.mode === "ai";
   els.aiRefreshBtn.disabled = !isAiMode || state.aiRefreshing;
-  els.aiRefreshBtn.textContent = state.aiRefreshing ? "生成中..." : "AIを更新";
+  els.aiRefreshBtn.textContent = state.aiRefreshing ? "生成中..." : "出題";
   if (isAiMode) {
     els.prevQuestionBtn.disabled = state.aiRefreshing || state.aiHistory.length < 2;
     els.newQuestionBtn.disabled = state.aiRefreshing || state.aiHistory.length < 2;
@@ -388,7 +388,6 @@ async function ensureAiQuestionBatch() {
     state.aiPosition = Math.max(0, Math.min(state.aiPosition, state.aiHistory.length - 1));
     return;
   }
-  await refreshAiQuestions();
 }
 
 function clampPastPosition() {
@@ -441,14 +440,16 @@ function getProgressLabel() {
 
 function renderQuestion(question) {
   if (!question) {
-    els.sourceBadge.textContent = "問題なし";
+    const isAiMode = state.mode === "ai";
+    els.sourceBadge.textContent = isAiMode ? "AI出題" : "問題なし";
     els.categoryBadge.textContent = "-";
     els.difficultyBadge.textContent = "-";
     els.totalBadge.textContent = "0 / 0";
-    els.questionNumber.textContent = "Q0 / 0";
-    els.questionText.textContent = "条件に合う問題がありません。分野または年度を変更してください。";
+    els.questionNumber.textContent = isAiMode ? "AI 0 / 0" : "Q0 / 0";
+    els.questionText.textContent = isAiMode ? "「出題」を押すとAI問題を5問生成します。" : "条件に合う問題がありません。分野または年度を変更してください。";
     els.optionsList.innerHTML = "";
     els.explanationBox.hidden = true;
+    updateAiRefreshControl();
     renderStats();
     return;
   }
@@ -567,7 +568,6 @@ async function setMode(mode) {
   els.modePast.setAttribute("aria-selected", String(mode === "past"));
   els.modeAi.setAttribute("aria-selected", String(mode === "ai"));
   updateAiRefreshControl();
-  if (mode === "ai") await ensureAiQuestionBatch();
   if (mode === "past") clampPastPosition();
   updateAiRefreshControl();
   renderQuestion(getCurrentQuestion());
@@ -601,7 +601,7 @@ localStorage.removeItem(APP_STORAGE_KEYS.backendUrl);
 els.aiProviderSelect.addEventListener("change", (event) => {
   state.aiProvider = event.target.value;
   localStorage.setItem(APP_STORAGE_KEYS.aiProvider, state.aiProvider);
-  setBackendStatus(`${providerLabel(state.aiProvider)}を使用します。AIを更新すると新しい5問に反映されます。`);
+  setBackendStatus(`${providerLabel(state.aiProvider)}を使用します。「出題」を押すと新しい5問に反映されます。`);
 });
 
 els.difficultyButtons.forEach((button) => {
@@ -610,7 +610,7 @@ els.difficultyButtons.forEach((button) => {
     els.difficultyButtons.forEach((item) => item.classList.remove("active"));
     button.classList.add("active");
     if (state.mode === "ai") {
-      setBackendStatus("難易度を変更しました。AIを更新すると新しい5問に反映されます。");
+      setBackendStatus("難易度を変更しました。「出題」を押すと新しい5問に反映されます。");
     }
   });
 });
@@ -655,7 +655,7 @@ els.resetBtn.addEventListener("click", async () => {
 });
 
 renderYearOptions();
-setBackendStatus("AI出題を利用できます");
+setBackendStatus("AI出題モードで「出題」を押すと5問生成します");
 updateAiRefreshControl();
 renderMistakes();
 renderQuestion(getCurrentQuestion());
