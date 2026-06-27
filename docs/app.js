@@ -1,5 +1,3 @@
-﻿const defaultPastQuestions = [];
-
 const APP_STORAGE_KEYS = {
   aiProvider: "nurseExamAiProvider",
   backendUrl: "nurseExamBackendUrl",
@@ -17,10 +15,10 @@ const state = {
   difficulty: "基礎",
   aiProvider: localStorage.getItem(APP_STORAGE_KEYS.aiProvider) || "deepseek",
   backendUrl: getStoredBackendUrl(),
-  pastPosition: savedStudyState.pastPosition,
   aiHistory: savedStudyState.aiHistory,
   aiPosition: savedStudyState.aiPosition,
   aiRefreshing: false,
+  aiError: "",
   aiSerial: savedStudyState.aiSerial,
   current: null,
   answers: new Map(savedStudyState.answers),
@@ -43,6 +41,10 @@ const els = {
   categoryBadge: document.querySelector("#categoryBadge"),
   difficultyBadge: document.querySelector("#difficultyBadge"),
   totalBadge: document.querySelector("#totalBadge"),
+  conditionStrip: document.querySelector("#conditionStrip"),
+  conditionCategory: document.querySelector("#conditionCategory"),
+  conditionDifficulty: document.querySelector("#conditionDifficulty"),
+  conditionCount: document.querySelector("#conditionCount"),
   questionNumber: document.querySelector("#questionNumber"),
   questionText: document.querySelector("#questionText"),
   optionsList: document.querySelector("#optionsList"),
@@ -60,17 +62,8 @@ const els = {
   studyTipText: document.querySelector("#studyTipText")
 };
 
-function getAllPastQuestions() {
-  return [];
-}
-
-function getFilteredPastQuestions() {
-  return [];
-}
-
 function loadStudyState() {
   const fallback = {
-    pastPosition: 0,
     aiHistory: [],
     aiPosition: -1,
     aiSerial: 0,
@@ -87,7 +80,6 @@ function loadStudyState() {
       : [];
 
     return {
-      pastPosition: Number.isInteger(parsed.pastPosition) ? parsed.pastPosition : fallback.pastPosition,
       aiHistory,
       aiPosition: Number.isInteger(parsed.aiPosition) ? parsed.aiPosition : (aiHistory.length ? 0 : -1),
       aiSerial: Number.isInteger(parsed.aiSerial) ? parsed.aiSerial : fallback.aiSerial,
@@ -101,7 +93,6 @@ function loadStudyState() {
 
 function saveStudyState() {
   localStorage.setItem(APP_STORAGE_KEYS.studyState, JSON.stringify({
-    pastPosition: state.pastPosition,
     aiHistory: state.aiHistory,
     aiPosition: state.aiPosition,
     aiSerial: state.aiSerial,
@@ -129,31 +120,14 @@ function normalizeAnswer(rawAnswer, options) {
 
 async function createAiQuestions() {
   setBackendStatus(`${providerLabel(state.aiProvider)}でAI問題を5問生成中...`);
-  try {
-    const data = await requestAiQuestion();
-    const provider = data.provider || state.aiProvider;
-    const fallbackText = data.fallbackFrom ? `（${providerLabel(data.fallbackFrom)}から切替）` : "";
-    setBackendStatus(`${providerLabel(provider)}で生成しました${fallbackText}`);
-    const rawQuestions = Array.isArray(data.questions) ? data.questions : [data.question || data];
-    const questions = rawQuestions.slice(0, AI_BATCH_SIZE).map((item) => normalizeAiQuestion(item, provider));
-    if (questions.length < AI_BATCH_SIZE) throw new Error("AI response has too few questions");
-    return questions;
-  } catch (error) {
-    console.error(error);
-    setBackendStatus(`生成失敗: ${error.message}`);
-    state.aiSerial += 1;
-    return [{
-      id: `ai-error-${Date.now()}-${state.aiSerial}`,
-      source: "AI出題",
-      category: state.category === "all" ? "AI" : state.category,
-      difficulty: state.difficulty,
-      question: "AI出題サーバーに接続できませんでした。少し待って再試行するか、出題APIを切り替えてください。",
-      options: ["もう一度試す", "出題APIを切り替える"],
-      answer: null,
-      explanation: "GitHub PagesだけではAPIキーを安全に使えないため、Gemini / DeepSeekは後端サーバーから呼び出す必要があります。",
-      note: error.message
-    }];
-  }
+  const data = await requestAiQuestion();
+  const provider = data.provider || state.aiProvider;
+  const fallbackText = data.fallbackFrom ? `（${providerLabel(data.fallbackFrom)}から切替）` : "";
+  setBackendStatus(`${providerLabel(provider)}で生成しました${fallbackText}`);
+  const rawQuestions = Array.isArray(data.questions) ? data.questions : [data.question || data];
+  const questions = rawQuestions.slice(0, AI_BATCH_SIZE).map((item) => normalizeAiQuestion(item, provider));
+  if (questions.length < AI_BATCH_SIZE) throw new Error("AI response has too few questions");
+  return questions;
 }
 
 async function requestAiQuestion() {
@@ -237,11 +211,11 @@ function setBackendStatus(message) {
 }
 
 function getCurrentList() {
-  return state.mode === "past" ? getFilteredPastQuestions() : state.aiHistory;
+  return state.mode === "ai" ? state.aiHistory : [];
 }
 
 function getCurrentPosition() {
-  return state.mode === "past" ? state.pastPosition : state.aiPosition;
+  return state.mode === "ai" ? state.aiPosition : -1;
 }
 
 function getCurrentQuestion() {
@@ -269,13 +243,19 @@ function updateAiRefreshControl() {
 async function refreshAiQuestions() {
   if (state.aiRefreshing) return;
   state.aiRefreshing = true;
+  state.aiError = "";
   updateAiRefreshControl();
+  renderQuestion(getCurrentQuestion());
 
   try {
     state.aiHistory = await createAiQuestions();
     state.aiPosition = 0;
     setBackendStatus(`${state.aiHistory.length}問のAI問題を更新しました`);
     saveStudyState();
+  } catch (error) {
+    console.error(error);
+    state.aiError = error.message || "AI generation failed";
+    setBackendStatus(`生成に失敗しました: ${state.aiError}`);
   } finally {
     state.aiRefreshing = false;
     updateAiRefreshControl();
@@ -289,47 +269,27 @@ async function ensureAiQuestionBatch() {
   }
 }
 
-function clampPastPosition() {
-  const list = getFilteredPastQuestions();
-  state.pastPosition = list.length ? Math.min(state.pastPosition, list.length - 1) : 0;
-}
-
 async function goNextQuestion() {
-  if (state.mode === "past") {
-    const list = getFilteredPastQuestions();
-    if (!list.length) return;
-    state.pastPosition = (state.pastPosition + 1) % list.length;
-  } else {
-    await ensureAiQuestionBatch();
-    if (!state.aiHistory.length) return;
-    state.aiPosition = (state.aiPosition + 1) % state.aiHistory.length;
-  }
+  if (state.mode !== "ai") return;
+  await ensureAiQuestionBatch();
+  if (!state.aiHistory.length) return;
+  state.aiPosition = (state.aiPosition + 1) % state.aiHistory.length;
   saveStudyState();
   renderQuestion(getCurrentQuestion());
 }
 
 function goPrevQuestion() {
-  if (state.mode === "past") {
-    const list = getFilteredPastQuestions();
-    if (!list.length) return;
-    state.pastPosition = (state.pastPosition - 1 + list.length) % list.length;
-  } else if (state.aiHistory.length) {
-    state.aiPosition = (state.aiPosition - 1 + state.aiHistory.length) % state.aiHistory.length;
-  }
+  if (state.mode !== "ai" || !state.aiHistory.length) return;
+  state.aiPosition = (state.aiPosition - 1 + state.aiHistory.length) % state.aiHistory.length;
   saveStudyState();
   renderQuestion(getCurrentQuestion());
 }
 
 async function goRandomQuestion() {
-  if (state.mode === "past") {
-    const list = getFilteredPastQuestions();
-    if (!list.length) return;
-    state.pastPosition = Math.floor(Math.random() * list.length);
-  } else {
-    await ensureAiQuestionBatch();
-    if (!state.aiHistory.length) return;
-    state.aiPosition = Math.floor(Math.random() * state.aiHistory.length);
-  }
+  if (state.mode !== "ai") return;
+  await ensureAiQuestionBatch();
+  if (!state.aiHistory.length) return;
+  state.aiPosition = Math.floor(Math.random() * state.aiHistory.length);
   saveStudyState();
   renderQuestion(getCurrentQuestion());
 }
@@ -341,6 +301,8 @@ function getProgressLabel() {
 }
 
 function renderQuestion(question) {
+  updateConditionStrip();
+
   if (!question) {
     const isAiMode = state.mode === "ai";
     state.current = null;
@@ -356,8 +318,9 @@ function renderQuestion(question) {
         <a class="external-link-button" href="${PAST_QUESTION_REFERENCE_URL}" target="_blank" rel="noreferrer">過去問.comで年度一覧を開く</a>
       </div>
     `;
-    els.showAnswerBtn.hidden = !isAiMode;
-    els.saveMistakeBtn.hidden = !isAiMode;
+    if (isAiMode && state.aiError) renderAiError();
+    els.showAnswerBtn.hidden = true;
+    els.saveMistakeBtn.hidden = true;
     els.explanationBox.hidden = true;
     updateAiRefreshControl();
     renderStats();
@@ -400,6 +363,48 @@ function renderQuestion(question) {
   });
 
   renderStats();
+}
+
+function updateConditionStrip() {
+  if (!els.conditionStrip) return;
+  const isAiMode = state.mode === "ai";
+  els.conditionStrip.hidden = !isAiMode;
+  if (!isAiMode) return;
+
+  els.conditionCategory.textContent = `分野: ${getSelectedCategoryLabel()}`;
+  els.conditionDifficulty.textContent = `難易度: ${state.difficulty}`;
+  els.conditionCount.textContent = `出題数: ${AI_BATCH_SIZE}問`;
+}
+
+function getSelectedCategoryLabel() {
+  return state.category === "all" ? "すべての分野" : state.category;
+}
+
+function renderAiError() {
+  els.optionsList.innerHTML = "";
+  const card = document.createElement("div");
+  card.className = "ai-error-card";
+
+  const title = document.createElement("strong");
+  title.textContent = "AI出題を生成できませんでした";
+
+  const message = document.createElement("p");
+  message.textContent = "通信状況や出題APIの混雑を確認して、少し時間をおいてから再度お試しください。";
+
+  const detail = document.createElement("small");
+  detail.textContent = state.aiError;
+
+  const retry = document.createElement("button");
+  retry.className = "secondary-action";
+  retry.type = "button";
+  retry.textContent = "もう一度出題";
+  retry.addEventListener("click", async () => {
+    await refreshAiQuestions();
+    renderQuestion(getCurrentQuestion());
+  });
+
+  card.append(title, message, detail, retry);
+  els.optionsList.appendChild(card);
 }
 
 function chooseAnswer(index) {
@@ -459,9 +464,25 @@ function renderMistakes() {
   state.mistakes.slice(0, 6).forEach((item) => {
     const li = document.createElement("li");
     const label = item.exam ? `${item.exam}｜` : "";
-    li.textContent = `${label}${item.category}｜${item.question}`;
+    const button = document.createElement("button");
+    button.className = "mistake-review-button";
+    button.type = "button";
+    button.textContent = `${label}${item.category}｜${item.question}`;
+    button.addEventListener("click", () => openMistake(item.id));
+    li.appendChild(button);
     els.mistakeList.appendChild(li);
   });
+}
+
+function openMistake(id) {
+  const index = state.aiHistory.findIndex((item) => item.id === id);
+  if (index < 0) {
+    setBackendStatus("この苦手問題は現在のAI出題履歴にありません。もう一度出題して復習してください。");
+    return;
+  }
+
+  state.aiPosition = index;
+  void setMode("ai");
 }
 
 function updateTip(done) {
@@ -483,13 +504,11 @@ async function setMode(mode) {
   els.modePast.setAttribute("aria-selected", String(mode === "past"));
   els.modeAi.setAttribute("aria-selected", String(mode === "ai"));
   updateAiRefreshControl();
-  if (mode === "past") clampPastPosition();
   updateAiRefreshControl();
   renderQuestion(getCurrentQuestion());
 }
 
 function rerenderCurrentMode() {
-  state.pastPosition = 0;
   saveStudyState();
   renderQuestion(getCurrentQuestion());
 }
@@ -564,15 +583,15 @@ els.clearMistakesBtn.addEventListener("click", () => {
 });
 
 els.resetBtn.addEventListener("click", async () => {
+  const confirmed = window.confirm("学習進捗をリセットしますか？解答記録と苦手リストが消えます。");
+  if (!confirmed) return;
   state.answers.clear();
   state.mistakes = [];
-  state.pastPosition = 0;
   saveStudyState();
   renderMistakes();
   renderQuestion(getCurrentQuestion());
 });
 
-clampPastPosition();
 setBackendStatus("AI出題モードで「出題」を押すと5問生成します");
 updateAiRefreshControl();
 renderMistakes();

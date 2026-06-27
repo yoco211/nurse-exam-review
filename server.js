@@ -17,10 +17,10 @@ const MIME_TYPES = {
 };
 
 const server = http.createServer(async (req, res) => {
-  setCorsHeaders(res);
+  const isAllowedOrigin = setCorsHeaders(req, res);
 
   if (req.method === "OPTIONS") {
-    res.writeHead(204);
+    res.writeHead(isAllowedOrigin ? 204 : 403);
     res.end();
     return;
   }
@@ -28,6 +28,13 @@ const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, `http://${req.headers.host}`);
     if (req.method === "POST" && url.pathname === "/api/generate-question") {
+      if (!isAllowedOrigin) {
+        sendJson(res, 403, { error: "Origin not allowed" });
+        return;
+      }
+
+      if (!checkRateLimit(req, res)) return;
+
       try {
         await handleGenerateQuestion(req, res);
       } catch (error) {
@@ -52,6 +59,17 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, () => {
   console.log(`Nurse exam review server running at http://127.0.0.1:${PORT}`);
 });
+
+const DEFAULT_ALLOWED_ORIGINS = [
+  "https://yoco211.github.io",
+  "http://127.0.0.1:8787",
+  "http://localhost:8787",
+  "http://127.0.0.1:8788",
+  "http://localhost:8788"
+];
+const RATE_LIMIT_WINDOW_MS = 60 * 1000;
+const RATE_LIMIT_MAX = Number(process.env.AI_RATE_LIMIT_PER_MINUTE || 20);
+const rateLimitStore = new Map();
 
 async function handleGenerateQuestion(req, res) {
   const body = await readJson(req);
@@ -259,10 +277,65 @@ async function serveStatic(pathname, res) {
   }
 }
 
-function setCorsHeaders(res) {
-  res.setHeader("Access-Control-Allow-Origin", "*");
+function setCorsHeaders(req, res) {
+  const origin = req.headers.origin;
+  const allowed = isOriginAllowed(origin);
+  if (allowed && origin) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Vary", "Origin");
+  }
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type,Authorization");
+  return allowed;
+}
+
+function isOriginAllowed(origin) {
+  if (!origin) return true;
+  return getAllowedOrigins().includes(origin);
+}
+
+function getAllowedOrigins() {
+  const configured = String(process.env.ALLOWED_ORIGINS || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  return [...new Set([...DEFAULT_ALLOWED_ORIGINS, ...configured])];
+}
+
+function checkRateLimit(req, res) {
+  if (!Number.isFinite(RATE_LIMIT_MAX) || RATE_LIMIT_MAX <= 0) return true;
+
+  const now = Date.now();
+  const key = getClientKey(req);
+  const bucket = rateLimitStore.get(key) || { count: 0, resetAt: now + RATE_LIMIT_WINDOW_MS };
+
+  if (now > bucket.resetAt) {
+    bucket.count = 0;
+    bucket.resetAt = now + RATE_LIMIT_WINDOW_MS;
+  }
+
+  bucket.count += 1;
+  rateLimitStore.set(key, bucket);
+  cleanupRateLimitStore(now);
+
+  if (bucket.count <= RATE_LIMIT_MAX) return true;
+
+  const retryAfter = Math.max(1, Math.ceil((bucket.resetAt - now) / 1000));
+  res.setHeader("Retry-After", String(retryAfter));
+  sendJson(res, 429, { error: "Too many requests. Please wait and try again." });
+  return false;
+}
+
+function getClientKey(req) {
+  const forwarded = String(req.headers["x-forwarded-for"] || "").split(",")[0].trim();
+  return forwarded || req.socket?.remoteAddress || "unknown";
+}
+
+function cleanupRateLimitStore(now) {
+  if (rateLimitStore.size < 500) return;
+  for (const [key, bucket] of rateLimitStore.entries()) {
+    if (now > bucket.resetAt) rateLimitStore.delete(key);
+  }
 }
 
 function sendJson(res, status, body) {

@@ -1,8 +1,13 @@
 module.exports = async function handler(req, res) {
-  setCorsHeaders(res);
+  const isAllowedOrigin = setCorsHeaders(req, res);
 
   if (req.method === "OPTIONS") {
-    res.status(204).end();
+    res.status(isAllowedOrigin ? 204 : 403).end();
+    return;
+  }
+
+  if (!isAllowedOrigin) {
+    res.status(403).json({ error: "Origin not allowed" });
     return;
   }
 
@@ -10,6 +15,8 @@ module.exports = async function handler(req, res) {
     res.status(405).json({ error: "Method not allowed" });
     return;
   }
+
+  if (!checkRateLimit(req, res)) return;
 
   try {
     const body = typeof req.body === "string" ? JSON.parse(req.body || "{}") : (req.body || {});
@@ -28,10 +35,76 @@ module.exports = async function handler(req, res) {
   }
 };
 
-function setCorsHeaders(res) {
-  res.setHeader("Access-Control-Allow-Origin", "*");
+const DEFAULT_ALLOWED_ORIGINS = [
+  "https://yoco211.github.io",
+  "http://127.0.0.1:8787",
+  "http://localhost:8787",
+  "http://127.0.0.1:8788",
+  "http://localhost:8788"
+];
+const RATE_LIMIT_WINDOW_MS = 60 * 1000;
+const RATE_LIMIT_MAX = Number(process.env.AI_RATE_LIMIT_PER_MINUTE || 20);
+const rateLimitStore = new Map();
+
+function setCorsHeaders(req, res) {
+  const origin = req.headers.origin;
+  const allowed = isOriginAllowed(origin);
+  if (allowed && origin) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Vary", "Origin");
+  }
   res.setHeader("Access-Control-Allow-Methods", "POST,OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type,Authorization");
+  return allowed;
+}
+
+function isOriginAllowed(origin) {
+  if (!origin) return true;
+  return getAllowedOrigins().includes(origin);
+}
+
+function getAllowedOrigins() {
+  const configured = String(process.env.ALLOWED_ORIGINS || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  return [...new Set([...DEFAULT_ALLOWED_ORIGINS, ...configured])];
+}
+
+function checkRateLimit(req, res) {
+  if (!Number.isFinite(RATE_LIMIT_MAX) || RATE_LIMIT_MAX <= 0) return true;
+
+  const now = Date.now();
+  const key = getClientKey(req);
+  const bucket = rateLimitStore.get(key) || { count: 0, resetAt: now + RATE_LIMIT_WINDOW_MS };
+
+  if (now > bucket.resetAt) {
+    bucket.count = 0;
+    bucket.resetAt = now + RATE_LIMIT_WINDOW_MS;
+  }
+
+  bucket.count += 1;
+  rateLimitStore.set(key, bucket);
+  cleanupRateLimitStore(now);
+
+  if (bucket.count <= RATE_LIMIT_MAX) return true;
+
+  const retryAfter = Math.max(1, Math.ceil((bucket.resetAt - now) / 1000));
+  res.setHeader("Retry-After", String(retryAfter));
+  res.status(429).json({ error: "Too many requests. Please wait and try again." });
+  return false;
+}
+
+function getClientKey(req) {
+  const forwarded = String(req.headers["x-forwarded-for"] || "").split(",")[0].trim();
+  return forwarded || req.socket?.remoteAddress || "unknown";
+}
+
+function cleanupRateLimitStore(now) {
+  if (rateLimitStore.size < 500) return;
+  for (const [key, bucket] of rateLimitStore.entries()) {
+    if (now > bucket.resetAt) rateLimitStore.delete(key);
+  }
 }
 
 async function generateQuestion(provider, prompt, count) {

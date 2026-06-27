@@ -287,6 +287,26 @@ input::placeholder {
   font-weight: 800;
 }
 
+.condition-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: -12px 0 24px;
+}
+
+.condition-strip span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid #cfe4df;
+  border-radius: 8px;
+  background: #f6fbfa;
+  color: #31433f;
+  font-size: 13px;
+  font-weight: 800;
+}
+
 .question-head {
   display: grid;
   gap: 10px;
@@ -337,6 +357,33 @@ input::placeholder {
   color: #fff;
   font-weight: 850;
   text-decoration: none;
+}
+
+.ai-error-card {
+  display: grid;
+  gap: 10px;
+  max-width: 720px;
+  padding: 18px;
+  border: 1px solid rgba(183, 68, 68, 0.28);
+  border-radius: 8px;
+  background: #fff7f5;
+}
+
+.ai-error-card strong {
+  color: var(--wrong);
+}
+
+.ai-error-card p,
+.ai-error-card small {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.ai-error-card .secondary-action {
+  width: fit-content;
+  margin-top: 4px;
+  background: #fff;
 }
 
 .option-button {
@@ -488,6 +535,22 @@ input::placeholder {
   color: #33433f;
   font-size: 13px;
   line-height: 1.45;
+}
+
+.mistake-review-button {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  text-align: left;
+  line-height: inherit;
+}
+
+.mistake-review-button:hover,
+.mistake-review-button:focus-visible {
+  color: var(--teal-dark);
+  text-decoration: underline;
 }
 
 .study-tip p,
