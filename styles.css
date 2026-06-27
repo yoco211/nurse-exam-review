@@ -309,6 +309,36 @@ input::placeholder {
   margin-top: 28px;
 }
 
+.external-question-card {
+  display: grid;
+  gap: 14px;
+  max-width: 720px;
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f7fbfa;
+}
+
+.external-question-card p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.65;
+}
+
+.external-link-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: fit-content;
+  min-height: 44px;
+  padding: 0 16px;
+  border-radius: 8px;
+  background: var(--teal);
+  color: #fff;
+  font-weight: 850;
+  text-decoration: none;
+}
+
 .option-button {
   display: grid;
   grid-template-columns: 38px 1fr;
