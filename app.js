@@ -9,21 +9,11 @@ const DEFAULT_BACKEND_URL = "https://nurse-exam-review-backend.vercel.app";
 const AI_BATCH_SIZE = 5;
 const PAST_QUESTION_REFERENCE_URL = "https://nurse.kakomonn.com/list";
 
-const BUILT_IN_YEARS = [
-  ["all", "直近5回すべて"],
-  ["115", "第115回（2026年）"],
-  ["114", "第114回（2025年）"],
-  ["113", "第113回（2024年）"],
-  ["112", "第112回（2023年）"],
-  ["111", "第111回（2022年）"]
-];
-
 const savedStudyState = loadStudyState();
 
 const state = {
   mode: "past",
   category: "all",
-  yearFilter: "all",
   difficulty: "基礎",
   aiProvider: localStorage.getItem(APP_STORAGE_KEYS.aiProvider) || "deepseek",
   backendUrl: getStoredBackendUrl(),
@@ -41,7 +31,6 @@ const els = {
   modePast: document.querySelector("#modePast"),
   modeAi: document.querySelector("#modeAi"),
   categorySelect: document.querySelector("#categorySelect"),
-  yearSelect: document.querySelector("#yearSelect"),
   aiProviderSelect: document.querySelector("#aiProviderSelect"),
   backendStatus: document.querySelector("#backendStatus"),
   difficultyButtons: document.querySelectorAll("[data-difficulty]"),
@@ -77,19 +66,6 @@ function getAllPastQuestions() {
 
 function getFilteredPastQuestions() {
   return [];
-}
-
-function renderYearOptions() {
-  els.yearSelect.innerHTML = "";
-  BUILT_IN_YEARS.forEach(([value, label]) => {
-    const option = document.createElement("option");
-    option.value = value;
-    option.textContent = label;
-    els.yearSelect.appendChild(option);
-  });
-
-  if (!BUILT_IN_YEARS.some(([value]) => value === state.yearFilter)) state.yearFilter = "all";
-  els.yearSelect.value = state.yearFilter;
 }
 
 function loadStudyState() {
@@ -280,7 +256,6 @@ function updateAiRefreshControl() {
   els.aiRefreshBtn.disabled = !isAiMode || state.aiRefreshing;
   els.aiRefreshBtn.textContent = state.aiRefreshing ? "生成中..." : "出題";
   els.categorySelect.disabled = !isAiMode;
-  els.yearSelect.disabled = true;
   els.shuffleBtn.disabled = !isAiMode || state.aiRefreshing || state.aiHistory.length < 2;
   if (isAiMode) {
     els.prevQuestionBtn.disabled = state.aiRefreshing || state.aiHistory.length < 2;
@@ -513,7 +488,7 @@ async function setMode(mode) {
   renderQuestion(getCurrentQuestion());
 }
 
-function resetPastPosition() {
+function rerenderCurrentMode() {
   state.pastPosition = 0;
   saveStudyState();
   renderQuestion(getCurrentQuestion());
@@ -528,12 +503,11 @@ els.modeAi.addEventListener("click", () => {
 
 els.categorySelect.addEventListener("change", (event) => {
   state.category = event.target.value;
-  resetPastPosition();
-});
-
-els.yearSelect.addEventListener("change", (event) => {
-  state.yearFilter = event.target.value;
-  resetPastPosition();
+  if (state.mode === "ai") {
+    const categoryLabel = state.category === "all" ? "すべての分野" : state.category;
+    setBackendStatus(`分野を「${categoryLabel}」に変更しました。「出題」を押すと新しい5問に反映されます。`);
+  }
+  rerenderCurrentMode();
 });
 
 els.aiProviderSelect.value = state.aiProvider;
@@ -598,7 +572,6 @@ els.resetBtn.addEventListener("click", async () => {
   renderQuestion(getCurrentQuestion());
 });
 
-renderYearOptions();
 clampPastPosition();
 setBackendStatus("AI出題モードで「出題」を押すと5問生成します");
 updateAiRefreshControl();
