@@ -125,6 +125,7 @@ const APP_STORAGE_KEYS = {
   backendUrl: "nurseExamBackendUrl"
 };
 const DEFAULT_BACKEND_URL = "https://nurse-exam-review-backend.vercel.app";
+const AI_BATCH_SIZE = 5;
 
 const BUILT_IN_YEARS = [
   ["all", "直近5回すべて"],
@@ -145,6 +146,8 @@ const state = {
   pastPosition: 0,
   aiHistory: [],
   aiPosition: -1,
+  aiRefreshing: false,
+  aiSerial: 0,
   current: null,
   answers: new Map(),
   mistakes: []
@@ -160,6 +163,7 @@ const els = {
   difficultyButtons: document.querySelectorAll("[data-difficulty]"),
   prevQuestionBtn: document.querySelector("#prevQuestionBtn"),
   newQuestionBtn: document.querySelector("#newQuestionBtn"),
+  aiRefreshBtn: document.querySelector("#aiRefreshBtn"),
   shuffleBtn: document.querySelector("#shuffleBtn"),
   resetBtn: document.querySelector("#resetBtn"),
   sourceBadge: document.querySelector("#sourceBadge"),
@@ -225,8 +229,9 @@ function normalizeAnswer(rawAnswer, options) {
   return optionIndex >= 0 ? optionIndex : null;
 }
 
-async function createAiQuestion() {
-  setBackendStatus(`${providerLabel(state.aiProvider)}で生成中...`);
+async function createAiQuestion(batchIndex = 1, batchTotal = 1) {
+  const batchLabel = batchTotal > 1 ? `（${batchIndex}/${batchTotal}）` : "";
+  setBackendStatus(`${providerLabel(state.aiProvider)}でAI問題を生成中...${batchLabel}`);
   try {
     const data = await requestAiQuestion();
     const provider = data.provider || state.aiProvider;
@@ -236,8 +241,9 @@ async function createAiQuestion() {
   } catch (error) {
     console.error(error);
     setBackendStatus(`生成失敗: ${error.message}`);
+    state.aiSerial += 1;
     return {
-      id: `ai-error-${Date.now()}`,
+      id: `ai-error-${Date.now()}-${state.aiSerial}`,
       source: "AI出題",
       category: state.category === "all" ? "AI" : state.category,
       difficulty: state.difficulty,
@@ -307,8 +313,9 @@ function normalizeAiQuestion(raw, provider) {
     throw new Error("AI response format is invalid");
   }
 
+  state.aiSerial += 1;
   return {
-    id: `ai-${provider}-${Date.now()}`,
+    id: `ai-${provider}-${Date.now()}-${state.aiSerial}`,
     source: `AI出題｜${providerLabel(provider)}`,
     category: raw.category ? String(raw.category) : (state.category === "all" ? "AI" : state.category),
     difficulty: raw.difficulty ? String(raw.difficulty) : state.difficulty,
@@ -342,10 +349,46 @@ function getCurrentQuestion() {
   return list[getCurrentPosition()];
 }
 
-async function ensureAiQuestion() {
-  if (state.aiHistory.length) return;
-  state.aiHistory.push(await createAiQuestion());
-  state.aiPosition = 0;
+function updateAiRefreshControl() {
+  if (!els.aiRefreshBtn) return;
+  const isAiMode = state.mode === "ai";
+  els.aiRefreshBtn.disabled = !isAiMode || state.aiRefreshing;
+  els.aiRefreshBtn.textContent = state.aiRefreshing ? "生成中..." : "AIを更新";
+  if (isAiMode) {
+    els.prevQuestionBtn.disabled = state.aiRefreshing || state.aiHistory.length < 2;
+    els.newQuestionBtn.disabled = state.aiRefreshing || state.aiHistory.length < 2;
+  } else {
+    els.prevQuestionBtn.disabled = false;
+    els.newQuestionBtn.disabled = false;
+  }
+}
+
+async function refreshAiQuestions() {
+  if (state.aiRefreshing) return;
+  state.aiRefreshing = true;
+  updateAiRefreshControl();
+
+  try {
+    const nextQuestions = [];
+    for (let index = 0; index < AI_BATCH_SIZE; index += 1) {
+      nextQuestions.push(await createAiQuestion(index + 1, AI_BATCH_SIZE));
+    }
+
+    state.aiHistory = nextQuestions;
+    state.aiPosition = 0;
+    setBackendStatus(`${AI_BATCH_SIZE}問のAI問題を更新しました`);
+  } finally {
+    state.aiRefreshing = false;
+    updateAiRefreshControl();
+  }
+}
+
+async function ensureAiQuestionBatch() {
+  if (state.aiHistory.length) {
+    state.aiPosition = Math.max(0, Math.min(state.aiPosition, state.aiHistory.length - 1));
+    return;
+  }
+  await refreshAiQuestions();
 }
 
 function clampPastPosition() {
@@ -358,11 +401,10 @@ async function goNextQuestion() {
     const list = getFilteredPastQuestions();
     if (!list.length) return;
     state.pastPosition = (state.pastPosition + 1) % list.length;
-  } else if (state.aiPosition < state.aiHistory.length - 1) {
-    state.aiPosition += 1;
   } else {
-    state.aiHistory.push(await createAiQuestion());
-    state.aiPosition = state.aiHistory.length - 1;
+    await ensureAiQuestionBatch();
+    if (!state.aiHistory.length) return;
+    state.aiPosition = (state.aiPosition + 1) % state.aiHistory.length;
   }
   renderQuestion(getCurrentQuestion());
 }
@@ -372,8 +414,8 @@ function goPrevQuestion() {
     const list = getFilteredPastQuestions();
     if (!list.length) return;
     state.pastPosition = (state.pastPosition - 1 + list.length) % list.length;
-  } else if (state.aiPosition > 0) {
-    state.aiPosition -= 1;
+  } else if (state.aiHistory.length) {
+    state.aiPosition = (state.aiPosition - 1 + state.aiHistory.length) % state.aiHistory.length;
   }
   renderQuestion(getCurrentQuestion());
 }
@@ -384,8 +426,9 @@ async function goRandomQuestion() {
     if (!list.length) return;
     state.pastPosition = Math.floor(Math.random() * list.length);
   } else {
-    state.aiHistory.push(await createAiQuestion());
-    state.aiPosition = state.aiHistory.length - 1;
+    await ensureAiQuestionBatch();
+    if (!state.aiHistory.length) return;
+    state.aiPosition = Math.floor(Math.random() * state.aiHistory.length);
   }
   renderQuestion(getCurrentQuestion());
 }
@@ -423,7 +466,7 @@ function renderQuestion(question) {
   els.explanationBox.hidden = !hasAnswered;
   els.explanationText.textContent = question.explanation;
   els.jpNote.textContent = question.note;
-  els.prevQuestionBtn.disabled = state.mode === "ai" && state.aiPosition <= 0;
+  updateAiRefreshControl();
 
   els.optionsList.innerHTML = "";
   question.options.forEach((option, index) => {
@@ -523,8 +566,10 @@ async function setMode(mode) {
   els.modeAi.classList.toggle("active", mode === "ai");
   els.modePast.setAttribute("aria-selected", String(mode === "past"));
   els.modeAi.setAttribute("aria-selected", String(mode === "ai"));
-  if (mode === "ai") await ensureAiQuestion();
+  updateAiRefreshControl();
+  if (mode === "ai") await ensureAiQuestionBatch();
   if (mode === "past") clampPastPosition();
+  updateAiRefreshControl();
   renderQuestion(getCurrentQuestion());
 }
 
@@ -556,7 +601,7 @@ localStorage.removeItem(APP_STORAGE_KEYS.backendUrl);
 els.aiProviderSelect.addEventListener("change", (event) => {
   state.aiProvider = event.target.value;
   localStorage.setItem(APP_STORAGE_KEYS.aiProvider, state.aiProvider);
-  setBackendStatus(`${providerLabel(state.aiProvider)}を使用します`);
+  setBackendStatus(`${providerLabel(state.aiProvider)}を使用します。AIを更新すると新しい5問に反映されます。`);
 });
 
 els.difficultyButtons.forEach((button) => {
@@ -565,9 +610,7 @@ els.difficultyButtons.forEach((button) => {
     els.difficultyButtons.forEach((item) => item.classList.remove("active"));
     button.classList.add("active");
     if (state.mode === "ai") {
-      state.aiHistory.push(await createAiQuestion());
-      state.aiPosition = state.aiHistory.length - 1;
-      renderQuestion(getCurrentQuestion());
+      setBackendStatus("難易度を変更しました。AIを更新すると新しい5問に反映されます。");
     }
   });
 });
@@ -575,6 +618,10 @@ els.difficultyButtons.forEach((button) => {
 els.prevQuestionBtn.addEventListener("click", goPrevQuestion);
 els.newQuestionBtn.addEventListener("click", () => {
   void goNextQuestion();
+});
+els.aiRefreshBtn.addEventListener("click", async () => {
+  await refreshAiQuestions();
+  renderQuestion(getCurrentQuestion());
 });
 els.shuffleBtn.addEventListener("click", () => {
   void goRandomQuestion();
@@ -602,15 +649,13 @@ els.clearMistakesBtn.addEventListener("click", () => {
 els.resetBtn.addEventListener("click", async () => {
   state.answers.clear();
   state.mistakes = [];
-  state.aiHistory = [];
-  state.aiPosition = -1;
   state.pastPosition = 0;
-  if (state.mode === "ai") await ensureAiQuestion();
   renderMistakes();
   renderQuestion(getCurrentQuestion());
 });
 
 renderYearOptions();
 setBackendStatus("AI出題を利用できます");
+updateAiRefreshControl();
 renderMistakes();
 renderQuestion(getCurrentQuestion());

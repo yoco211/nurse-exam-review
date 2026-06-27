@@ -254,6 +254,10 @@ input::placeholder {
   margin-top: 26px;
 }
 
+.ai-refresh-button {
+  grid-column: 1 / -1;
+}
+
 .nav-button {
   width: 100%;
   margin-top: 0;
