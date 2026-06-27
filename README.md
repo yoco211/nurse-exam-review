@@ -1,6 +1,22 @@
 # 看護師国家試験対策
 
-静的フロントエンドと Node.js 後端で構成された復習アプリです。
+日本の看護師国家試験対策向けの復習アプリです。GitHub Pages で配信する静的フロントエンドと、Vercel で動かす AI 出題 API で構成されています。
+
+## 公開 URL
+
+- フロントエンド: https://yoco211.github.io/nurse-exam-review/
+- AI 後端: https://nurse-exam-review-backend.vercel.app
+- GitHub Pages の公開元: `docs/`
+
+## 主な機能
+
+- 過去問対策（模擬）と AI 出題の切り替え
+- 第111回から第115回相当の過去問対策用模擬問題
+- 分野・年度・難易度の絞り込み
+- AI 出題は `出題` ボタンを押したときに 5 問まとめて生成
+- 答題記録、正答率、苦手問題、AI 生成済み問題をブラウザの `localStorage` に保存
+- Gemini / DeepSeek のプロバイダー切り替え
+- Gemini 失敗時は後端で DeepSeek に fallback
 
 ## ローカル起動
 
@@ -12,17 +28,55 @@ npm start
 
 起動後、`http://127.0.0.1:8787` を開きます。
 
+PowerShell の実行ポリシーで `npm start` が止まる場合は、Windows では次を使えます。
+
+```bash
+npm.cmd start
+```
+
 ## AI 出題 API
 
-フロントエンドは `/api/generate-question` にリクエストします。
+フロントエンドは次の API を呼び出します。
 
-- `provider: "gemini"` の場合、後端が Gemini API を呼び出します。
-- `provider: "deepseek"` の場合、後端が DeepSeek API を呼び出します。
+```http
+POST /api/generate-question
+Content-Type: application/json
+```
 
-API キーはブラウザに置かず、後端の環境変数で管理します。
+リクエスト例:
 
-## デプロイ
+```json
+{
+  "provider": "deepseek",
+  "category": "必修",
+  "difficulty": "基礎",
+  "count": 5
+}
+```
 
-GitHub Pages は静的ファイルのみ対応しているため、AI 出題を本番で使うには `server.js` を Vercel、Render、Railway などの Node.js 対応ホスティングへデプロイしてください。
+`count` は `1` から `5` まで対応します。`count: 5` の場合、後端は 1 回のモデル呼び出しで 5 問をまとめて生成し、`questions` 配列で返します。`count` を省略した場合は従来通り 1 問を `question` として返します。
 
-その後、画面左側の `Backend URL` にデプロイ先 URL を入力します。
+## ファイル同期
+
+GitHub Pages は `docs/` から配信します。フロントエンドを変更した場合は、次のファイルを同期してください。
+
+- `index.html` -> `docs/index.html`
+- `styles.css` -> `docs/styles.css`
+- `app.js` -> `docs/app.js`
+
+後端は次のファイルを同期して運用しています。
+
+- `backend/api/generate-question.js`
+- `api/generate-question.js`
+- `server.js`（ローカル確認用）
+
+## 公式真題について
+
+現在内蔵している「過去問対策」は、出題傾向の復習を目的にした模擬問題です。公式の過去問原文そのものではありません。
+
+公式真題に差し替えることは技術的には可能ですが、次のどちらかが必要です。
+
+- 厚生労働省など公式サイトで公開され、利用条件を確認できる PDF / データ
+- ユーザーが提供する、利用許諾のある題庫テキスト
+
+公式原題を使う場合は、出典、年度、問題番号、利用条件を明記して取り込む必要があります。出典が確認できない問題文を「公式真題」として掲載することは避けてください。

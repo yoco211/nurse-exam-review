@@ -122,7 +122,8 @@ const aiTemplates = [
 
 const APP_STORAGE_KEYS = {
   aiProvider: "nurseExamAiProvider",
-  backendUrl: "nurseExamBackendUrl"
+  backendUrl: "nurseExamBackendUrl",
+  studyState: "nurseExamStudyState"
 };
 const DEFAULT_BACKEND_URL = "https://nurse-exam-review-backend.vercel.app";
 const AI_BATCH_SIZE = 5;
@@ -136,6 +137,8 @@ const BUILT_IN_YEARS = [
   ["111", "第111回（2022年）"]
 ];
 
+const savedStudyState = loadStudyState();
+
 const state = {
   mode: "past",
   category: "all",
@@ -143,14 +146,14 @@ const state = {
   difficulty: "基礎",
   aiProvider: localStorage.getItem(APP_STORAGE_KEYS.aiProvider) || "deepseek",
   backendUrl: getStoredBackendUrl(),
-  pastPosition: 0,
-  aiHistory: [],
-  aiPosition: -1,
+  pastPosition: savedStudyState.pastPosition,
+  aiHistory: savedStudyState.aiHistory,
+  aiPosition: savedStudyState.aiPosition,
   aiRefreshing: false,
-  aiSerial: 0,
+  aiSerial: savedStudyState.aiSerial,
   current: null,
-  answers: new Map(),
-  mistakes: []
+  answers: new Map(savedStudyState.answers),
+  mistakes: savedStudyState.mistakes
 };
 
 const els = {
@@ -212,6 +215,46 @@ function renderYearOptions() {
   els.yearSelect.value = state.yearFilter;
 }
 
+function loadStudyState() {
+  const fallback = {
+    pastPosition: 0,
+    aiHistory: [],
+    aiPosition: -1,
+    aiSerial: 0,
+    answers: [],
+    mistakes: []
+  };
+
+  try {
+    const parsed = JSON.parse(localStorage.getItem(APP_STORAGE_KEYS.studyState) || "{}");
+    const aiHistory = Array.isArray(parsed.aiHistory) ? parsed.aiHistory : [];
+    const mistakes = Array.isArray(parsed.mistakes) ? parsed.mistakes : [];
+    const answers = Array.isArray(parsed.answers) ? parsed.answers.filter((item) => Array.isArray(item) && item.length === 2) : [];
+
+    return {
+      pastPosition: Number.isInteger(parsed.pastPosition) ? parsed.pastPosition : fallback.pastPosition,
+      aiHistory,
+      aiPosition: Number.isInteger(parsed.aiPosition) ? parsed.aiPosition : (aiHistory.length ? 0 : -1),
+      aiSerial: Number.isInteger(parsed.aiSerial) ? parsed.aiSerial : fallback.aiSerial,
+      answers,
+      mistakes
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+function saveStudyState() {
+  localStorage.setItem(APP_STORAGE_KEYS.studyState, JSON.stringify({
+    pastPosition: state.pastPosition,
+    aiHistory: state.aiHistory,
+    aiPosition: state.aiPosition,
+    aiSerial: state.aiSerial,
+    answers: [...state.answers.entries()],
+    mistakes: state.mistakes
+  }));
+}
+
 function normalizeAnswer(rawAnswer, options) {
   if (rawAnswer === undefined || rawAnswer === null || rawAnswer === "") return null;
   if (Number.isInteger(rawAnswer)) return rawAnswer;
@@ -229,20 +272,22 @@ function normalizeAnswer(rawAnswer, options) {
   return optionIndex >= 0 ? optionIndex : null;
 }
 
-async function createAiQuestion(batchIndex = 1, batchTotal = 1) {
-  const batchLabel = batchTotal > 1 ? `（${batchIndex}/${batchTotal}）` : "";
-  setBackendStatus(`${providerLabel(state.aiProvider)}でAI問題を生成中...${batchLabel}`);
+async function createAiQuestions() {
+  setBackendStatus(`${providerLabel(state.aiProvider)}でAI問題を5問生成中...`);
   try {
     const data = await requestAiQuestion();
     const provider = data.provider || state.aiProvider;
     const fallbackText = data.fallbackFrom ? `（${providerLabel(data.fallbackFrom)}から切替）` : "";
     setBackendStatus(`${providerLabel(provider)}で生成しました${fallbackText}`);
-    return normalizeAiQuestion(data.question || data, provider);
+    const rawQuestions = Array.isArray(data.questions) ? data.questions : [data.question || data];
+    const questions = rawQuestions.slice(0, AI_BATCH_SIZE).map((item) => normalizeAiQuestion(item, provider));
+    if (questions.length < AI_BATCH_SIZE) throw new Error("AI response has too few questions");
+    return questions;
   } catch (error) {
     console.error(error);
     setBackendStatus(`生成失敗: ${error.message}`);
     state.aiSerial += 1;
-    return {
+    return [{
       id: `ai-error-${Date.now()}-${state.aiSerial}`,
       source: "AI出題",
       category: state.category === "all" ? "AI" : state.category,
@@ -252,7 +297,7 @@ async function createAiQuestion(batchIndex = 1, batchTotal = 1) {
       answer: null,
       explanation: "GitHub PagesだけではAPIキーを安全に使えないため、Gemini / DeepSeekは後端サーバーから呼び出す必要があります。",
       note: error.message
-    };
+    }];
   }
 }
 
@@ -260,7 +305,8 @@ async function requestAiQuestion() {
   const payload = {
     provider: state.aiProvider,
     category: state.category === "all" ? "必修・人体構造・疾病看護・社会保障・在宅看護" : state.category,
-    difficulty: state.difficulty
+    difficulty: state.difficulty,
+    count: AI_BATCH_SIZE
   };
 
   try {
@@ -369,14 +415,10 @@ async function refreshAiQuestions() {
   updateAiRefreshControl();
 
   try {
-    const nextQuestions = [];
-    for (let index = 0; index < AI_BATCH_SIZE; index += 1) {
-      nextQuestions.push(await createAiQuestion(index + 1, AI_BATCH_SIZE));
-    }
-
-    state.aiHistory = nextQuestions;
+    state.aiHistory = await createAiQuestions();
     state.aiPosition = 0;
-    setBackendStatus(`${AI_BATCH_SIZE}問のAI問題を更新しました`);
+    setBackendStatus(`${state.aiHistory.length}問のAI問題を更新しました`);
+    saveStudyState();
   } finally {
     state.aiRefreshing = false;
     updateAiRefreshControl();
@@ -405,6 +447,7 @@ async function goNextQuestion() {
     if (!state.aiHistory.length) return;
     state.aiPosition = (state.aiPosition + 1) % state.aiHistory.length;
   }
+  saveStudyState();
   renderQuestion(getCurrentQuestion());
 }
 
@@ -416,6 +459,7 @@ function goPrevQuestion() {
   } else if (state.aiHistory.length) {
     state.aiPosition = (state.aiPosition - 1 + state.aiHistory.length) % state.aiHistory.length;
   }
+  saveStudyState();
   renderQuestion(getCurrentQuestion());
 }
 
@@ -429,6 +473,7 @@ async function goRandomQuestion() {
     if (!state.aiHistory.length) return;
     state.aiPosition = Math.floor(Math.random() * state.aiHistory.length);
   }
+  saveStudyState();
   renderQuestion(getCurrentQuestion());
 }
 
@@ -494,12 +539,14 @@ function chooseAnswer(index) {
   if (!state.current || state.answers.has(state.current.id)) return;
   state.answers.set(state.current.id, index);
   if (state.current.answer !== null && index !== state.current.answer) addMistake(state.current);
+  saveStudyState();
   renderQuestion(state.current);
 }
 
 function addMistake(question) {
   const exists = state.mistakes.some((item) => item.id === question.id);
   if (!exists) state.mistakes.unshift(question);
+  saveStudyState();
   renderMistakes();
 }
 
@@ -575,6 +622,7 @@ async function setMode(mode) {
 
 function resetPastPosition() {
   state.pastPosition = 0;
+  saveStudyState();
   renderQuestion(getCurrentQuestion());
 }
 
@@ -637,11 +685,13 @@ els.showAnswerBtn.addEventListener("click", () => {
 els.saveMistakeBtn.addEventListener("click", () => {
   if (!state.current) return;
   addMistake(state.current);
+  saveStudyState();
   renderStats();
 });
 
 els.clearMistakesBtn.addEventListener("click", () => {
   state.mistakes = [];
+  saveStudyState();
   renderMistakes();
   renderStats();
 });
@@ -650,11 +700,13 @@ els.resetBtn.addEventListener("click", async () => {
   state.answers.clear();
   state.mistakes = [];
   state.pastPosition = 0;
+  saveStudyState();
   renderMistakes();
   renderQuestion(getCurrentQuestion());
 });
 
 renderYearOptions();
+clampPastPosition();
 setBackendStatus("AI出題モードで「出題」を押すと5問生成します");
 updateAiRefreshControl();
 renderMistakes();

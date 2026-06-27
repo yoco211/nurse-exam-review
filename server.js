@@ -58,52 +58,60 @@ async function handleGenerateQuestion(req, res) {
   const provider = body.provider === "deepseek" ? "deepseek" : "gemini";
   const category = String(body.category || "必修");
   const difficulty = String(body.difficulty || "標準");
-  const prompt = buildQuestionPrompt(category, difficulty);
+  const count = normalizeQuestionCount(body.count);
+  const prompt = buildQuestionPrompt(category, difficulty, count);
 
-  const result = await generateQuestion(provider, prompt);
+  const result = await generateQuestion(provider, prompt, count);
 
   sendJson(res, 200, result);
 }
 
-async function generateQuestion(provider, prompt) {
+async function generateQuestion(provider, prompt, count) {
   if (provider === "deepseek") {
-    return { provider: "deepseek", question: await generateWithDeepSeek(prompt) };
+    const generated = await generateWithDeepSeek(prompt, count);
+    return count > 1 ? { provider: "deepseek", questions: generated } : { provider: "deepseek", question: generated };
   }
 
   try {
-    return { provider: "gemini", question: await generateWithGemini(prompt) };
+    const generated = await generateWithGemini(prompt, count);
+    return count > 1 ? { provider: "gemini", questions: generated } : { provider: "gemini", question: generated };
   } catch (error) {
     if (!process.env.DEEPSEEK_API_KEY) throw error;
     console.warn(`Gemini failed, falling back to DeepSeek: ${error.message}`);
+    const generated = await generateWithDeepSeek(prompt, count);
     return {
       provider: "deepseek",
       fallbackFrom: "gemini",
-      question: await generateWithDeepSeek(prompt)
+      ...(count > 1 ? { questions: generated } : { question: generated })
     };
   }
 }
 
-function buildQuestionPrompt(category, difficulty) {
+function buildQuestionPrompt(category, difficulty, count = 1) {
+  const isBatch = count > 1;
   return [
     "あなたは日本の看護師国家試験対策に詳しい講師です。",
-    "指定条件に合わせて、著作権のある実在過去問をコピーせず、完全に新しい四択問題を1問作成してください。",
+    `指定条件に合わせて、著作権のある実在過去問をコピーせず、完全に新しい四択問題を${count}問作成してください。`,
     `分野: ${category}`,
     `難易度: ${difficulty}`,
-    "出力はJSONのみ。Markdownや説明文は不要。",
+    "出力はJSONのみ、Markdownや説明文は不要。",
     "JSON schema:",
-    '{"category":"必修","difficulty":"標準","question":"問題文","options":["A","B","C","D"],"answer":"A","explanation":"解説","note":"復習ポイント"}',
-    "answerは必ず options のいずれか1つと一致する文字列、または A/B/C/D のどれかにしてください。",
-    "問題文、選択肢、解説、復習ポイントはすべて日本語で書いてください。"
+    isBatch
+      ? '{"questions":[{"category":"必修","difficulty":"標準","question":"問題文","options":["A","B","C","D"],"answer":"A","explanation":"解説","note":"復習ポイント"}]}'
+      : '{"category":"必修","difficulty":"標準","question":"問題文","options":["A","B","C","D"],"answer":"A","explanation":"解説","note":"復習ポイント"}',
+    "answerは必ず options のいずれかと一致する文字列、または A/B/C/D のどれかにしてください。",
+    "問題文、選択肢、解説、復習ポイントはすべて日本語で書いてください。",
+    "同じ観点の問題を重複させず、各問題の問い方と正答を分散してください。"
   ].join("\n");
 }
 
-async function generateWithGemini(prompt) {
+async function generateWithGemini(prompt, count = 1) {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error("GEMINI_API_KEY is not set");
 
   const model = process.env.GEMINI_MODEL || "gemini-3.5-flash";
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 22000);
+  const timeout = setTimeout(() => controller.abort(), 30000);
   const response = await fetch("https://generativelanguage.googleapis.com/v1beta/interactions", {
     method: "POST",
     signal: controller.signal,
@@ -121,16 +129,17 @@ async function generateWithGemini(prompt) {
 
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.error?.message || `Gemini API error ${response.status}`);
-  return parseModelQuestion(data.output_text || extractText(data));
+  const text = data.output_text || extractText(data);
+  return count > 1 ? parseModelQuestions(text, count) : parseModelQuestion(text);
 }
 
-async function generateWithDeepSeek(prompt) {
+async function generateWithDeepSeek(prompt, count = 1) {
   const apiKey = process.env.DEEPSEEK_API_KEY;
   if (!apiKey) throw new Error("DEEPSEEK_API_KEY is not set");
 
   const model = process.env.DEEPSEEK_MODEL || "deepseek-v4-flash";
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 22000);
+  const timeout = setTimeout(() => controller.abort(), 30000);
   const response = await fetch("https://api.deepseek.com/chat/completions", {
     method: "POST",
     signal: controller.signal,
@@ -152,12 +161,35 @@ async function generateWithDeepSeek(prompt) {
 
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.error?.message || `DeepSeek API error ${response.status}`);
-  return parseModelQuestion(data.choices?.[0]?.message?.content || extractText(data));
+  const text = data.choices?.[0]?.message?.content || extractText(data);
+  return count > 1 ? parseModelQuestions(text, count) : parseModelQuestion(text);
+}
+
+function normalizeQuestionCount(rawCount) {
+  const count = Number(rawCount);
+  if (!Number.isFinite(count)) return 1;
+  return Math.max(1, Math.min(5, Math.trunc(count)));
+}
+
+function parseModelQuestions(text, expectedCount) {
+  const jsonText = extractJsonText(String(text || ""));
+  const parsed = JSON.parse(jsonText);
+  const rawQuestions = Array.isArray(parsed.questions) ? parsed.questions : (Array.isArray(parsed) ? parsed : []);
+  const questions = rawQuestions.map(parseQuestionObject).slice(0, expectedCount);
+
+  if (questions.length < expectedCount) {
+    throw new Error("Model returned too few questions");
+  }
+
+  return questions;
 }
 
 function parseModelQuestion(text) {
   const jsonText = extractJsonText(String(text || ""));
-  const parsed = JSON.parse(jsonText);
+  return parseQuestionObject(JSON.parse(jsonText));
+}
+
+function parseQuestionObject(parsed) {
   const options = Array.isArray(parsed.options) ? parsed.options.map(String).slice(0, 6) : [];
   const answer = normalizeAnswer(parsed.answer, options);
 
